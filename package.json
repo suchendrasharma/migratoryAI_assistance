@@ -1,0 +1,29 @@
+{
+  "name": "migratoryai_assistance",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/suchendrasharma/migratoryAI_assistance.git"
+  },
+  "bin": {
+    "migratoryAI": "./src/cli/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/suchendrasharma/migratoryAI_assistance/issues"
+  },
+  "homepage": "https://github.com/suchendrasharma/migratoryAI_assistance#readme",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^14.0.3",
+    "ora": "^9.3.0"
+  }
+}
