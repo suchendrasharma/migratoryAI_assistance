@@ -5,12 +5,47 @@ const chalk = require('chalk');
 const ora = require('ora').default;
 
 const { getMongoConfig } = require('../config/env');
+const { analyzeDocuments } = require('../core/analyzer');
 const {
   fetchSampleDocuments,
   closeMongoConnection,
 } = require('../db/mongoConnector');
 
 const program = new Command();
+
+function printFieldAnalysis(analysis) {
+  console.log(chalk.cyan('\nDetected SQL mapping:'));
+
+  analysis.tables.forEach((table) => {
+    console.log(chalk.green(`\nTable: ${table.tableName}`));
+
+    table.columns.forEach((column) => {
+      const qualifiers = [];
+
+      if (column.isPrimaryKey) {
+        qualifiers.push('PK');
+      }
+
+      if (column.isForeignKey) {
+        qualifiers.push(`FK -> ${column.references}`);
+      }
+
+      if (column.note) {
+        qualifiers.push(column.note);
+      }
+
+      const qualifierText = qualifiers.length > 0 ? ` [${qualifiers.join(', ')}]` : '';
+      console.log(
+        `- ${column.name}: ${column.inferredSqlType}${column.nullable ? ' NULL' : ' NOT NULL'}${qualifierText}`
+      );
+    });
+  });
+
+  console.log(chalk.cyan('\nSuggested SQL:'));
+  analysis.sqlStatements.forEach((statement) => {
+    console.log(statement);
+  });
+}
 
 async function runAnalyzeCommand(options) {
   const spinner = ora('Connecting to MongoDB...').start();
@@ -41,6 +76,9 @@ async function runAnalyzeCommand(options) {
 
     console.log(chalk.cyan('\nSample data:'));
     console.log(JSON.stringify(result.documents, null, 2));
+
+    const analysis = analyzeDocuments(result.documents, result.collectionName);
+    printFieldAnalysis(analysis);
   } catch (error) {
     spinner.fail('Unable to analyze MongoDB sample data.');
     console.error(chalk.red(error.message));
