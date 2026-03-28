@@ -32,13 +32,25 @@ async function resolveCollection(db, requestedCollectionName) {
 }
 
 async function fetchSampleDocuments(config, options = {}) {
+  return fetchDocuments(config, {
+    ...options,
+    limit: options.limit || config.sampleLimit,
+  });
+}
+
+async function fetchDocuments(config, options = {}) {
   const { db } = await connectMongo(config);
   const collectionName = await resolveCollection(
     db,
     options.collectionName || config.collectionName
   );
-  const limit = options.limit || config.sampleLimit;
-  const documents = await db.collection(collectionName).find({}).limit(limit).toArray();
+  const cursor = db.collection(collectionName).find({});
+
+  if (options.limit) {
+    cursor.limit(options.limit);
+  }
+
+  const documents = await cursor.toArray();
 
   return {
     collectionName,
@@ -55,6 +67,7 @@ async function closeMongoConnection() {
 
 module.exports = {
   connectMongo,
+  fetchDocuments,
   fetchSampleDocuments,
   closeMongoConnection,
 };

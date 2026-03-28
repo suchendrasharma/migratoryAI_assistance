@@ -30,6 +30,20 @@ function readPositiveInteger(value, fallback) {
   return parsedValue;
 }
 
+function readOptionalInteger(value, fallback) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  const parsedValue = Number.parseInt(value, 10);
+
+  if (Number.isNaN(parsedValue)) {
+    throw new Error(`Expected an integer but received "${value}"`);
+  }
+
+  return parsedValue;
+}
+
 function getMongoConfig() {
   return {
     uri: readRequiredEnv('MONGODB_URI'),
@@ -39,6 +53,27 @@ function getMongoConfig() {
   };
 }
 
+function getPostgresConfig() {
+  const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL || '';
+  const database = process.env.PGDATABASE || '';
+
+  if (!connectionString && !database) {
+    throw new Error(
+      'Missing PostgreSQL connection settings. Set POSTGRES_URL or PGDATABASE in your .env.'
+    );
+  }
+
+  return {
+    connectionString: connectionString || undefined,
+    host: process.env.PGHOST || '127.0.0.1',
+    port: readOptionalInteger(process.env.PGPORT, 5432),
+    user: process.env.PGUSER || 'postgres',
+    password: process.env.PGPASSWORD || undefined,
+    database: database || undefined,
+  };
+}
+
 module.exports = {
   getMongoConfig,
+  getPostgresConfig,
 };
