@@ -1,5 +1,17 @@
 const { analyzeDocuments } = require('./analyzer');
 
+const DEFAULT_BATCH_SIZE = 250;
+const DEFAULT_MAX_RETRIES = 3;
+const RETRYABLE_ERROR_CODES = new Set([
+  '40001',
+  '40P01',
+  '53300',
+  '57P01',
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'ECONNREFUSED',
+]);
+
 function toSnakeCase(value) {
   return String(value)
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
@@ -224,6 +236,65 @@ function withIndexIfNotExists(statement) {
   return statement.replace(/^CREATE INDEX /, 'CREATE INDEX IF NOT EXISTS ');
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function isRetryableError(error) {
+  return RETRYABLE_ERROR_CODES.has(error.code);
+}
+
+function chunkRows(rows, batchSize) {
+  const chunks = [];
+
+  for (let index = 0; index < rows.length; index += batchSize) {
+    chunks.push(rows.slice(index, index + batchSize));
+  }
+
+  return chunks;
+}
+
+function buildColumnGroups(rows, table) {
+  const groups = new Map();
+
+  rows.forEach((row) => {
+    const columns = table.columns
+      .map((column) => column.name)
+      .filter((columnName) => row[columnName] !== undefined);
+    const key = columns.join('|');
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        columns,
+        rows: [],
+      });
+    }
+
+    groups.get(key).rows.push(row);
+  });
+
+  return Array.from(groups.values());
+}
+
+function buildBatchInsertStatement(tableName, columns, rows) {
+  const values = [];
+  const valueGroups = rows.map((row, rowIndex) => {
+    const placeholders = columns.map((columnName, columnIndex) => {
+      values.push(row[columnName]);
+      return `$${rowIndex * columns.length + columnIndex + 1}`;
+    });
+
+    return `(${placeholders.join(', ')})`;
+  });
+
+  return {
+    text: `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES ${valueGroups.join(', ')}`,
+    values,
+  };
+}
+
 async function createSchema(client, analysis) {
   for (const statement of analysis.sqlStatements) {
     await client.query(withIfNotExists(statement));
@@ -234,25 +305,121 @@ async function createSchema(client, analysis) {
   }
 }
 
-async function insertRows(client, analysis, rowBuckets) {
+async function runBatchWithRetry({
+  client,
+  tableName,
+  batchRows,
+  columns,
+  batchNumber,
+  batchCount,
+  maxRetries,
+  onProgress,
+}) {
+  const statement = buildBatchInsertStatement(tableName, columns, batchRows);
+
+  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    const savepointName = `sp_${tableName}_${batchNumber}_${attempt}`;
+
+    await client.query(`SAVEPOINT ${savepointName}`);
+
+    try {
+      await client.query(statement.text, statement.values);
+      await client.query(`RELEASE SAVEPOINT ${savepointName}`);
+      return;
+    } catch (error) {
+      await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+
+      if (!isRetryableError(error) || attempt === maxRetries) {
+        const enhancedError = new Error(
+          `Batch insert failed for "${tableName}" on batch ${batchNumber}/${batchCount}: ${error.message}`
+        );
+        enhancedError.cause = error;
+        throw enhancedError;
+      }
+
+      if (onProgress) {
+        onProgress({
+          phase: 'retry',
+          tableName,
+          batchNumber,
+          batchCount,
+          attempt,
+          maxRetries,
+          errorCode: error.code || 'UNKNOWN',
+        });
+      }
+
+      await sleep(150 * attempt);
+    }
+  }
+}
+
+async function insertRows(client, analysis, rowBuckets, options = {}) {
+  const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
+  const maxRetries = options.maxRetries || DEFAULT_MAX_RETRIES;
+  const onProgress = options.onProgress;
+  const totalRows = Array.from(rowBuckets.values()).reduce((sum, rows) => sum + rows.length, 0);
   let insertedRowCount = 0;
 
   for (const table of analysis.tables) {
     const rows = rowBuckets.get(table.tableName) || [];
 
-    for (const row of rows) {
-      const columns = table.columns
-        .map((column) => column.name)
-        .filter((columnName) => row[columnName] !== undefined);
+    if (rows.length === 0) {
+      continue;
+    }
 
-      const placeholders = columns.map((_, index) => `$${index + 1}`);
-      const values = columns.map((columnName) => row[columnName]);
+    const columnGroups = buildColumnGroups(rows, table);
+    const totalBatches = columnGroups.reduce((sum, group) => {
+      return sum + chunkRows(group.rows, batchSize).length;
+    }, 0);
+    let processedTableRows = 0;
+    let batchNumber = 0;
 
-      await client.query(
-        `INSERT INTO ${table.tableName} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
-        values
-      );
-      insertedRowCount += 1;
+    if (onProgress) {
+      onProgress({
+        phase: 'table-start',
+        tableName: table.tableName,
+        tableRowCount: rows.length,
+        totalRows,
+        insertedRows: insertedRowCount,
+        batchCount: totalBatches,
+      });
+    }
+
+    for (const group of columnGroups) {
+      const batches = chunkRows(group.rows, batchSize);
+
+      for (const batchRows of batches) {
+        batchNumber += 1;
+
+        await runBatchWithRetry({
+          client,
+          tableName: table.tableName,
+          batchRows,
+          columns: group.columns,
+          batchNumber,
+          batchCount: totalBatches,
+          maxRetries,
+          onProgress,
+        });
+
+        insertedRowCount += batchRows.length;
+        processedTableRows += batchRows.length;
+
+        if (onProgress) {
+          onProgress({
+            phase: 'batch-complete',
+            tableName: table.tableName,
+            batchNumber,
+            batchCount: totalBatches,
+            batchSize: batchRows.length,
+            insertedRows: insertedRowCount,
+            totalRows,
+            processedTableRows,
+            tableRowCount: rows.length,
+          });
+        }
+      }
     }
   }
 
@@ -263,18 +430,39 @@ async function migrateDocuments({
   documents,
   collectionName,
   queryExecutor,
+  batchSize = DEFAULT_BATCH_SIZE,
+  maxRetries = DEFAULT_MAX_RETRIES,
+  onProgress,
 }) {
   const analysis = analyzeDocuments(documents, collectionName);
   const rowBuckets = buildRowsFromDocuments(documents, collectionName);
+  const totalRows = Array.from(rowBuckets.values()).reduce((sum, rows) => sum + rows.length, 0);
+
+  if (onProgress) {
+    onProgress({
+      phase: 'planning-complete',
+      totalRows,
+      tableCount: analysis.tables.length,
+      batchSize,
+    });
+  }
+
   const insertedRowCount = await queryExecutor(async (client) => {
     await createSchema(client, analysis);
-    return insertRows(client, analysis, rowBuckets);
+    return insertRows(client, analysis, rowBuckets, {
+      batchSize,
+      maxRetries,
+      onProgress,
+    });
   });
 
   return {
     analysis,
     insertedRowCount,
     migratedTables: analysis.tables.length,
+    totalRows,
+    batchSize,
+    maxRetries,
   };
 }
 

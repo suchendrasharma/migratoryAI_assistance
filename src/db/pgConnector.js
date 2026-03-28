@@ -34,17 +34,28 @@ async function query(config, text, params = []) {
   return activePool.query(text, params);
 }
 
-async function withPostgresTransaction(config, callback) {
+function sanitizeIdentifier(value) {
+  return String(value).replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+async function withPostgresTransaction(config, callback, options = {}) {
   const activePool = await connectPostgres(config);
   const client = await activePool.connect();
+  const isolationLevel = options.isolationLevel || 'READ COMMITTED';
+  const readOnlyClause = options.readOnly ? ' READ ONLY' : '';
 
   try {
-    await client.query('BEGIN');
+    await client.query(`BEGIN ISOLATION LEVEL ${isolationLevel}${readOnlyClause}`);
     const result = await callback(client);
     await client.query('COMMIT');
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      error.rollbackError = rollbackError;
+    }
+
     throw error;
   } finally {
     client.release();
