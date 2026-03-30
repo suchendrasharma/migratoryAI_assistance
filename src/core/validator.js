@@ -4,13 +4,28 @@ const { buildRowsFromDocuments } = require('./migrator');
 function buildValidationSummary(analysis, rowBuckets, targetCounts) {
   const tableComparisons = analysis.tables.map((table) => {
     const expectedRows = (rowBuckets.get(table.tableName) || []).length;
-    const actualRows = targetCounts[table.tableName] || 0;
+    const target = targetCounts[table.tableName] || {
+      actualRows: 0,
+      distinctFingerprints: 0,
+      duplicateRows: 0,
+      fingerprintCoverage: 0,
+    };
+    const actualRows = target.actualRows;
+    const distinctFingerprints = target.distinctFingerprints;
+    const duplicateRows = target.duplicateRows;
+    const fingerprintCoverage = target.fingerprintCoverage;
 
     return {
       tableName: table.tableName,
       expectedRows,
       actualRows,
-      matches: expectedRows === actualRows,
+      distinctFingerprints,
+      duplicateRows,
+      fingerprintCoverage,
+      matches:
+        expectedRows === actualRows &&
+        expectedRows === distinctFingerprints &&
+        duplicateRows === 0,
     };
   });
 
@@ -33,8 +48,15 @@ async function validateMigration({
     const counts = {};
 
     for (const tableName of tableNames) {
-      const result = await client.query(`SELECT COUNT(*)::int AS count FROM ${tableName}`);
-      counts[tableName] = result.rows[0].count;
+      const result = await client.query(
+        `SELECT COUNT(*)::int AS actual_rows, COUNT(DISTINCT source_fingerprint)::int AS distinct_fingerprints, (COUNT(*) - COUNT(DISTINCT source_fingerprint))::int AS duplicate_rows, COUNT(source_fingerprint)::int AS fingerprint_coverage FROM ${tableName}`
+      );
+      counts[tableName] = {
+        actualRows: result.rows[0].actual_rows,
+        distinctFingerprints: result.rows[0].distinct_fingerprints,
+        duplicateRows: result.rows[0].duplicate_rows,
+        fingerprintCoverage: result.rows[0].fingerprint_coverage,
+      };
     }
 
     return counts;

@@ -21,6 +21,13 @@ const {
 
 const program = new Command();
 
+function printRerunSafetyNote() {
+  console.log(chalk.cyan('\nRerun safety:'));
+  console.log('- Rows are tracked with stable source fingerprints.');
+  console.log('- PostgreSQL writes use upsert semantics on those fingerprints.');
+  console.log('- Re-running the same migration fills missing rows without creating duplicate entries.');
+}
+
 function printFieldAnalysis(analysis) {
   console.log(chalk.cyan('\nDetected SQL mapping:'));
 
@@ -77,8 +84,48 @@ function printValidationSummary(validationResult) {
   validationResult.tableComparisons.forEach((comparison) => {
     const status = comparison.matches ? chalk.green('MATCH') : chalk.red('MISMATCH');
     console.log(
-      `- ${comparison.tableName}: expected ${comparison.expectedRows}, actual ${comparison.actualRows} -> ${status}`
+      `- ${comparison.tableName}: expected ${comparison.expectedRows}, actual ${comparison.actualRows}, distinct fingerprints ${comparison.distinctFingerprints}, duplicates ${comparison.duplicateRows} -> ${status}`
     );
+  });
+}
+
+function printValidationGuidance(validationResult) {
+  const mismatches = validationResult.tableComparisons.filter((comparison) => !comparison.matches);
+
+  if (mismatches.length === 0) {
+    console.log(chalk.green('\nValidation result: source and target counts are aligned.'));
+    console.log('A rerun is not required right now, but it remains safe if you need to resume later.');
+    printRerunSafetyNote();
+    return;
+  }
+
+  console.log(chalk.yellow('\nValidation result: rerun recommended.'));
+  console.log('Some target tables are missing expected rows or have fingerprint inconsistencies.');
+  printRerunSafetyNote();
+  console.log(chalk.yellow('\nRecommended next step:'));
+  console.log('Run the same migrate command again for the same collection and dataset window.');
+
+  mismatches.forEach((comparison) => {
+    const missingRows = comparison.expectedRows - comparison.actualRows;
+    const duplicateRows = comparison.duplicateRows;
+
+    if (missingRows > 0) {
+      console.log(
+        `- ${comparison.tableName}: ${missingRows} expected row(s) are still missing in PostgreSQL.`
+      );
+    }
+
+    if (duplicateRows > 0) {
+      console.log(
+        `- ${comparison.tableName}: ${duplicateRows} duplicate row(s) were detected and should be investigated.`
+      );
+    }
+
+    if (comparison.fingerprintCoverage < comparison.actualRows) {
+      console.log(
+        `- ${comparison.tableName}: ${comparison.actualRows - comparison.fingerprintCoverage} row(s) do not have migration fingerprints.`
+      );
+    }
   });
 }
 
@@ -173,6 +220,11 @@ async function runMigrateCommand(options) {
       return;
     }
 
+    spinner.info(
+      `Starting idempotent migration for "${result.collectionName}". Safe reruns are enabled through source fingerprints and PostgreSQL upserts.`
+    );
+    spinner.start('Migrating documents into PostgreSQL...');
+
     spinner.text = 'Migrating documents into PostgreSQL...';
 
     const migrationResult = await migrateDocuments({
@@ -222,6 +274,7 @@ async function runMigrateCommand(options) {
       });
 
       printValidationSummary(validationResult);
+      printValidationGuidance(validationResult);
 
       if (!validationResult.matches) {
         process.exitCode = 1;
@@ -276,6 +329,7 @@ async function runValidateCommand(options) {
     }
 
     printValidationSummary(validationResult);
+    printValidationGuidance(validationResult);
   } catch (error) {
     spinner.fail('Validation failed.');
     console.error(chalk.red(error.message));
