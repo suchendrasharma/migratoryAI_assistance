@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 const { analyzeDocuments } = require('./analyzer');
 
 const DEFAULT_BATCH_SIZE = 250;
@@ -52,18 +54,6 @@ function buildChildTableName(parentTableName, fieldName, pathSegments) {
   return normalizeTableName(`${toSingular(parentTableName)}_${fieldName}`);
 }
 
-function createIdGenerator() {
-  const counters = new Map();
-
-  return {
-    next(tableName) {
-      const nextValue = (counters.get(tableName) || 0) + 1;
-      counters.set(tableName, nextValue);
-      return nextValue;
-    },
-  };
-}
-
 function getScalarKind(value) {
   if (value === null || value === undefined) {
     return 'null';
@@ -100,24 +90,80 @@ function ensureRowBucket(rowBuckets, tableName) {
   return rowBuckets.get(tableName);
 }
 
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function hashValue(value) {
+  return crypto.createHash('sha1').update(stableStringify(value)).digest('hex');
+}
+
+function stableIntegerId(value) {
+  const numericValue = Number.parseInt(hashValue(value).slice(0, 8), 16) & 0x7fffffff;
+  return numericValue === 0 ? 1 : numericValue;
+}
+
+function buildRowFingerprint(parts) {
+  return parts.join('::');
+}
+
+function resolveObjectIdentity(item) {
+  if (!item || typeof item !== 'object') {
+    return hashValue(item);
+  }
+
+  if (item._id !== undefined) {
+    return String(item._id);
+  }
+
+  if (item.id !== undefined) {
+    return String(item.id);
+  }
+
+  if (item.orderId !== undefined) {
+    return String(item.orderId);
+  }
+
+  if (item.externalId !== undefined) {
+    return String(item.externalId);
+  }
+
+  return hashValue(item);
+}
+
 function buildRowsFromDocuments(documents, collectionName) {
   const rootTableName = normalizeTableName(collectionName);
   const rowBuckets = new Map();
-  const ids = createIdGenerator();
 
   function processDocument({
     document,
     tableName,
     parentTableName,
-    parentRowId,
+    parentFingerprint,
+    parentForeignKeyName,
+    documentFingerprint,
     basePathSegments = [],
   }) {
     const row = {
-      id: ids.next(tableName),
+      id: stableIntegerId(documentFingerprint),
+      source_fingerprint: documentFingerprint,
     };
 
-    if (parentTableName && parentRowId !== undefined) {
-      row[`${toSingular(parentTableName)}_id`] = parentRowId;
+    if (parentTableName && parentFingerprint && parentForeignKeyName) {
+      row.__parentFingerprint = parentFingerprint;
+      row.__parentTableName = parentTableName;
+      row[parentForeignKeyName] = null;
     }
 
     Object.entries(document).forEach(([fieldName, value]) => {
@@ -130,7 +176,7 @@ function buildRowsFromDocuments(documents, collectionName) {
         value,
         row,
         tableName,
-        parentRowId: row.id,
+        parentFingerprint: documentFingerprint,
         pathSegments: basePathSegments.concat(fieldName),
       });
     });
@@ -138,16 +184,31 @@ function buildRowsFromDocuments(documents, collectionName) {
     ensureRowBucket(rowBuckets, tableName).push(row);
   }
 
-  function processArray({ parentTableName, parentRowId, fieldName, values, pathSegments }) {
+  function processArray({
+    parentTableName,
+    parentFingerprint,
+    fieldName,
+    values,
+    pathSegments,
+  }) {
     const childTableName = buildChildTableName(parentTableName, fieldName, pathSegments);
+    const parentForeignKeyName = `${toSingular(parentTableName)}_id`;
 
     values
       .filter((value) => value !== null && value !== undefined)
-      .forEach((item) => {
+      .forEach((item, index) => {
+        const itemIdentity = resolveObjectIdentity(item);
+        const childFingerprint = buildRowFingerprint([
+          parentFingerprint,
+          fieldName,
+          index,
+          itemIdentity,
+        ]);
+
         if (Array.isArray(item)) {
           processArray({
             parentTableName: childTableName,
-            parentRowId,
+            parentFingerprint: childFingerprint,
             fieldName: 'value',
             values: item,
             pathSegments: pathSegments.concat('value'),
@@ -160,15 +221,20 @@ function buildRowsFromDocuments(documents, collectionName) {
             document: item,
             tableName: childTableName,
             parentTableName,
-            parentRowId,
+            parentFingerprint,
+            parentForeignKeyName,
+            documentFingerprint: childFingerprint,
             basePathSegments: pathSegments,
           });
           return;
         }
 
         const row = {
-          id: ids.next(childTableName),
-          [`${toSingular(parentTableName)}_id`]: parentRowId,
+          id: stableIntegerId(childFingerprint),
+          source_fingerprint: childFingerprint,
+          __parentFingerprint: parentFingerprint,
+          __parentTableName: parentTableName,
+          [parentForeignKeyName]: null,
           value: convertScalarValue(item),
         };
 
@@ -176,26 +242,26 @@ function buildRowsFromDocuments(documents, collectionName) {
       });
   }
 
-  function processNestedObject({ prefix, value, row, tableName, parentRowId, pathSegments }) {
+  function processNestedObject({ prefix, value, row, tableName, parentFingerprint, pathSegments }) {
     Object.entries(value).forEach(([nestedKey, nestedValue]) => {
       processField({
         fieldName: `${prefix}_${nestedKey}`,
         value: nestedValue,
         row,
         tableName,
-        parentRowId,
+        parentFingerprint,
         pathSegments: pathSegments.concat(nestedKey),
       });
     });
   }
 
-  function processField({ fieldName, value, row, tableName, parentRowId, pathSegments }) {
+  function processField({ fieldName, value, row, tableName, parentFingerprint, pathSegments }) {
     const kind = getScalarKind(value);
 
     if (kind === 'array') {
       processArray({
         parentTableName: tableName,
-        parentRowId,
+        parentFingerprint,
         fieldName,
         values: value,
         pathSegments,
@@ -209,7 +275,7 @@ function buildRowsFromDocuments(documents, collectionName) {
         value,
         row,
         tableName,
-        parentRowId,
+        parentFingerprint,
         pathSegments,
       });
       return;
@@ -218,10 +284,19 @@ function buildRowsFromDocuments(documents, collectionName) {
     row[normalizeColumnName(fieldName)] = convertScalarValue(value);
   }
 
-  documents.forEach((document) => {
+  documents.forEach((document, index) => {
+    const rootIdentity = document && document._id !== undefined
+      ? String(document._id)
+      : hashValue({ index, document });
+    const documentFingerprint = buildRowFingerprint([
+      rootTableName,
+      rootIdentity,
+    ]);
+
     processDocument({
       document,
       tableName: rootTableName,
+      documentFingerprint,
     });
   });
 
@@ -262,7 +337,9 @@ function buildColumnGroups(rows, table) {
   rows.forEach((row) => {
     const columns = table.columns
       .map((column) => column.name)
-      .filter((columnName) => row[columnName] !== undefined);
+      .filter((columnName) => row[columnName] !== undefined)
+      .concat('source_fingerprint')
+      .filter((columnName, index, items) => items.indexOf(columnName) === index);
     const key = columns.join('|');
 
     if (!groups.has(key)) {
@@ -289,10 +366,28 @@ function buildBatchInsertStatement(tableName, columns, rows) {
     return `(${placeholders.join(', ')})`;
   });
 
+  const updatableColumns = columns.filter(
+    (column) => column !== 'id' && column !== 'source_fingerprint'
+  );
+  const updateClause = updatableColumns.length > 0
+    ? updatableColumns
+      .map((column) => `${column} = EXCLUDED.${column}`)
+      .join(', ')
+    : 'source_fingerprint = EXCLUDED.source_fingerprint';
+
   return {
-    text: `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES ${valueGroups.join(', ')}`,
+    text: `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES ${valueGroups.join(', ')} ON CONFLICT (source_fingerprint) DO UPDATE SET ${updateClause} RETURNING id, source_fingerprint`,
     values,
   };
+}
+
+async function ensureMigrationMetadataColumns(client, tableName) {
+  await client.query(
+    `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS source_fingerprint TEXT`
+  );
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS ux_${tableName}_source_fingerprint ON ${tableName} (source_fingerprint)`
+  );
 }
 
 async function createSchema(client, analysis) {
@@ -300,9 +395,67 @@ async function createSchema(client, analysis) {
     await client.query(withIfNotExists(statement));
   }
 
+  for (const table of analysis.tables) {
+    await ensureMigrationMetadataColumns(client, table.tableName);
+  }
+
   for (const indexSuggestion of analysis.indexSuggestions) {
     await client.query(withIndexIfNotExists(indexSuggestion.sql));
   }
+}
+
+async function assertTablesReadyForIdempotentMigration(client, analysis) {
+  for (const table of analysis.tables) {
+    const result = await client.query(
+      `SELECT COUNT(*)::int AS total_rows, COUNT(source_fingerprint)::int AS fingerprinted_rows FROM ${table.tableName}`
+    );
+    const totalRows = result.rows[0].total_rows;
+    const fingerprintedRows = result.rows[0].fingerprinted_rows;
+
+    if (totalRows > 0 && totalRows !== fingerprintedRows) {
+      throw new Error(
+        `Target table "${table.tableName}" contains ${totalRows - fingerprintedRows} legacy row(s) without migration fingerprints. Clean or backfill that table before running idempotent migration.`
+      );
+    }
+  }
+}
+
+function buildIdMap() {
+  return new Map();
+}
+
+function getTableForeignKeyColumn(table) {
+  const foreignKeyColumn = table.columns.find((column) => column.isForeignKey);
+  return foreignKeyColumn ? foreignKeyColumn.name : null;
+}
+
+function hydrateParentReferences(table, rows, idMaps) {
+  const foreignKeyColumn = getTableForeignKeyColumn(table);
+
+  if (!foreignKeyColumn || !table.parentTableName) {
+    return rows;
+  }
+
+  const parentMap = idMaps.get(table.parentTableName) || new Map();
+
+  return rows.map((row) => {
+    const parentFingerprint = row.__parentFingerprint;
+
+    if (!parentFingerprint) {
+      return row;
+    }
+
+    if (!parentMap.has(parentFingerprint)) {
+      throw new Error(
+        `Missing parent mapping for table "${table.tableName}" with parent fingerprint "${parentFingerprint}".`
+      );
+    }
+
+    return {
+      ...row,
+      [foreignKeyColumn]: parentMap.get(parentFingerprint),
+    };
+  });
 }
 
 async function runBatchWithRetry({
@@ -323,15 +476,15 @@ async function runBatchWithRetry({
     await client.query(`SAVEPOINT ${savepointName}`);
 
     try {
-      await client.query(statement.text, statement.values);
+      const result = await client.query(statement.text, statement.values);
       await client.query(`RELEASE SAVEPOINT ${savepointName}`);
-      return;
+      return result.rows;
     } catch (error) {
       await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
 
       if (!isRetryableError(error) || attempt === maxRetries) {
         const enhancedError = new Error(
-          `Batch insert failed for "${tableName}" on batch ${batchNumber}/${batchCount}: ${error.message}`
+          `Batch upsert failed for "${tableName}" on batch ${batchNumber}/${batchCount}: ${error.message}`
         );
         enhancedError.cause = error;
         throw enhancedError;
@@ -352,26 +505,31 @@ async function runBatchWithRetry({
       await sleep(150 * attempt);
     }
   }
+
+  return [];
 }
 
-async function insertRows(client, analysis, rowBuckets, options = {}) {
+async function upsertRows(client, analysis, rowBuckets, options = {}) {
   const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
   const maxRetries = options.maxRetries || DEFAULT_MAX_RETRIES;
   const onProgress = options.onProgress;
   const totalRows = Array.from(rowBuckets.values()).reduce((sum, rows) => sum + rows.length, 0);
+  const idMaps = new Map();
   let insertedRowCount = 0;
 
   for (const table of analysis.tables) {
-    const rows = rowBuckets.get(table.tableName) || [];
+    const rawRows = rowBuckets.get(table.tableName) || [];
 
-    if (rows.length === 0) {
+    if (rawRows.length === 0) {
       continue;
     }
 
+    const rows = hydrateParentReferences(table, rawRows, idMaps);
     const columnGroups = buildColumnGroups(rows, table);
     const totalBatches = columnGroups.reduce((sum, group) => {
       return sum + chunkRows(group.rows, batchSize).length;
     }, 0);
+    const tableIdMap = buildIdMap();
     let processedTableRows = 0;
     let batchNumber = 0;
 
@@ -392,7 +550,7 @@ async function insertRows(client, analysis, rowBuckets, options = {}) {
       for (const batchRows of batches) {
         batchNumber += 1;
 
-        await runBatchWithRetry({
+        const returnedRows = await runBatchWithRetry({
           client,
           tableName: table.tableName,
           batchRows,
@@ -401,6 +559,10 @@ async function insertRows(client, analysis, rowBuckets, options = {}) {
           batchCount: totalBatches,
           maxRetries,
           onProgress,
+        });
+
+        returnedRows.forEach((returnedRow) => {
+          tableIdMap.set(returnedRow.source_fingerprint, returnedRow.id);
         });
 
         insertedRowCount += batchRows.length;
@@ -421,6 +583,8 @@ async function insertRows(client, analysis, rowBuckets, options = {}) {
         }
       }
     }
+
+    idMaps.set(table.tableName, tableIdMap);
   }
 
   return insertedRowCount;
@@ -449,7 +613,8 @@ async function migrateDocuments({
 
   const insertedRowCount = await queryExecutor(async (client) => {
     await createSchema(client, analysis);
-    return insertRows(client, analysis, rowBuckets, {
+    await assertTablesReadyForIdempotentMigration(client, analysis);
+    return upsertRows(client, analysis, rowBuckets, {
       batchSize,
       maxRetries,
       onProgress,
