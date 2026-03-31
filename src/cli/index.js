@@ -4,7 +4,16 @@ const { Command } = require('commander');
 const chalk = require('chalk');
 const ora = require('ora').default;
 
-const { getMongoConfig, getPostgresConfig } = require('../config/env');
+const {
+  getMongoConfig,
+  getPostgresConfig,
+  mergeMongoConfig,
+  mergePostgresConfig,
+} = require('../config/env');
+const {
+  DEFAULT_CONFIG_FILENAME,
+  loadMigrationConfig,
+} = require('../config/fileConfig');
 const { analyzeDocuments } = require('../core/analyzer');
 const { migrateDocuments } = require('../core/migrator');
 const { validateMigration } = require('../core/validator');
@@ -26,6 +35,112 @@ function printRerunSafetyNote() {
   console.log('- Rows are tracked with stable source fingerprints.');
   console.log('- PostgreSQL writes use upsert semantics on those fingerprints.');
   console.log('- Re-running the same migration fills missing rows without creating duplicate entries.');
+}
+
+function readPositiveIntegerOption(value, optionName) {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  const parsedValue = Number.parseInt(value, 10);
+
+  if (Number.isNaN(parsedValue) || parsedValue <= 0) {
+    throw new Error(`The ${optionName} option must be a positive integer.`);
+  }
+
+  return parsedValue;
+}
+
+function resolveRuntimeConfig(options, commandName, requirements = {}) {
+  const loadedConfig = loadMigrationConfig(options.config);
+  const config = loadedConfig.config;
+  const configOptions = config ? config.options : {};
+  const sourceConfig = config ? config.source : {};
+  const targetConfig = config ? config.target : {};
+
+  if (config && sourceConfig.type !== 'mongodb') {
+    throw new Error(`Unsupported source type "${sourceConfig.type}" in ${loadedConfig.configPath}.`);
+  }
+
+  if (config && targetConfig.type !== 'postgres') {
+    throw new Error(`Unsupported target type "${targetConfig.type}" in ${loadedConfig.configPath}.`);
+  }
+
+  const collectionName = options.collection || configOptions.collectionName || sourceConfig.collectionName;
+  const limit = readPositiveIntegerOption(
+    options.limit !== undefined ? options.limit : configOptions.limit,
+    '--limit'
+  );
+  const sampleLimit = readPositiveIntegerOption(
+    options.limit !== undefined ? options.limit : configOptions.sampleLimit,
+    '--limit'
+  );
+  const batchSize = readPositiveIntegerOption(
+    options.batchSize !== undefined ? options.batchSize : configOptions.batchSize,
+    '--batch-size'
+  );
+  const retries = readPositiveIntegerOption(
+    options.retries !== undefined ? options.retries : configOptions.retries,
+    '--retries'
+  );
+  const validate = options.validate === true || configOptions.validate === true;
+
+  const mongoOverrides = {
+    uri: sourceConfig.uri,
+    dbName: sourceConfig.dbName,
+    collectionName,
+    sampleLimit:
+      sourceConfig.sampleLimit !== undefined ? sourceConfig.sampleLimit : configOptions.sampleLimit,
+  };
+  const postgresOverrides = {
+    connectionString: targetConfig.connectionString,
+    host: targetConfig.host,
+    port: targetConfig.port,
+    user: targetConfig.user,
+    password: targetConfig.password,
+    database: targetConfig.database,
+  };
+
+  const runtimeConfig = {
+    mongoConfig: requirements.mongo
+      ? (config ? mergeMongoConfig(removeUndefinedValues(mongoOverrides)) : getMongoConfig())
+      : null,
+    postgresConfig: requirements.postgres
+      ? (config
+        ? mergePostgresConfig(removeUndefinedValues(postgresOverrides))
+        : getPostgresConfig())
+      : null,
+    collectionName,
+    limit,
+    sampleLimit,
+    batchSize,
+    retries,
+    validate,
+    loadedConfig,
+    commandName,
+  };
+
+  if (!config) {
+    runtimeConfig.mongoConfig.collectionName = collectionName || runtimeConfig.mongoConfig.collectionName;
+  }
+
+  return runtimeConfig;
+}
+
+function removeUndefinedValues(input) {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined)
+  );
+}
+
+function printConfigUsageInfo(loadedConfig, commandName) {
+  if (!loadedConfig.exists) {
+    return;
+  }
+
+  console.log(
+    chalk.cyan(`\nUsing ${DEFAULT_CONFIG_FILENAME} for ${commandName}: ${loadedConfig.configPath}`)
+  );
 }
 
 function printFieldAnalysis(analysis) {
@@ -133,17 +248,14 @@ async function runAnalyzeCommand(options) {
   const spinner = ora('Connecting to MongoDB...').start();
 
   try {
-    const config = getMongoConfig();
-    const limit = options.limit ? Number.parseInt(options.limit, 10) : config.sampleLimit;
-
-    if (Number.isNaN(limit) || limit <= 0) {
-      throw new Error('The --limit option must be a positive integer.');
-    }
+    const runtimeConfig = resolveRuntimeConfig(options, 'analyze', { mongo: true });
+    const config = runtimeConfig.mongoConfig;
+    const limit = runtimeConfig.sampleLimit || config.sampleLimit;
 
     spinner.text = 'Fetching sample documents...';
 
     const result = await fetchSampleDocuments(config, {
-      collectionName: options.collection,
+      collectionName: runtimeConfig.collectionName,
       limit,
     });
 
@@ -161,6 +273,7 @@ async function runAnalyzeCommand(options) {
 
     const analysis = analyzeDocuments(result.documents, result.collectionName);
     printFieldAnalysis(analysis);
+    printConfigUsageInfo(runtimeConfig.loadedConfig, 'analyze');
   } catch (error) {
     spinner.fail('Unable to analyze MongoDB sample data.');
     console.error(chalk.red(error.message));
@@ -170,13 +283,15 @@ async function runAnalyzeCommand(options) {
   }
 }
 
-async function runPostgresCheckCommand() {
+async function runPostgresCheckCommand(options) {
   const spinner = ora('Connecting to PostgreSQL...').start();
 
   try {
-    const postgresConfig = getPostgresConfig();
+    const runtimeConfig = resolveRuntimeConfig(options, 'pg-check', { postgres: true });
+    const postgresConfig = runtimeConfig.postgresConfig;
     await connectPostgres(postgresConfig);
     spinner.succeed('PostgreSQL connection successful.');
+    printConfigUsageInfo(runtimeConfig.loadedConfig, 'pg-check');
   } catch (error) {
     spinner.fail('Unable to connect to PostgreSQL.');
     console.error(chalk.red(error.message));
@@ -190,28 +305,20 @@ async function runMigrateCommand(options) {
   const spinner = ora('Preparing migration...').start();
 
   try {
-    const mongoConfig = getMongoConfig();
-    const postgresConfig = getPostgresConfig();
-    const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
-    const batchSize = options.batchSize ? Number.parseInt(options.batchSize, 10) : 250;
-    const maxRetries = options.retries ? Number.parseInt(options.retries, 10) : 3;
-
-    if (limit !== undefined && (Number.isNaN(limit) || limit <= 0)) {
-      throw new Error('The --limit option must be a positive integer.');
-    }
-
-    if (Number.isNaN(batchSize) || batchSize <= 0) {
-      throw new Error('The --batch-size option must be a positive integer.');
-    }
-
-    if (Number.isNaN(maxRetries) || maxRetries <= 0) {
-      throw new Error('The --retries option must be a positive integer.');
-    }
+    const runtimeConfig = resolveRuntimeConfig(options, 'migrate', {
+      mongo: true,
+      postgres: true,
+    });
+    const mongoConfig = runtimeConfig.mongoConfig;
+    const postgresConfig = runtimeConfig.postgresConfig;
+    const limit = runtimeConfig.limit;
+    const batchSize = runtimeConfig.batchSize || 250;
+    const maxRetries = runtimeConfig.retries || 3;
 
     spinner.text = 'Fetching MongoDB documents...';
 
     const result = await fetchDocuments(mongoConfig, {
-      collectionName: options.collection,
+      collectionName: runtimeConfig.collectionName,
       limit,
     });
 
@@ -262,8 +369,9 @@ async function runMigrateCommand(options) {
     );
 
     printFieldAnalysis(migrationResult.analysis);
+    printConfigUsageInfo(runtimeConfig.loadedConfig, 'migrate');
 
-    if (options.validate) {
+    if (runtimeConfig.validate) {
       const validationResult = await validateMigration({
         documents: result.documents,
         collectionName: result.collectionName,
@@ -294,16 +402,16 @@ async function runValidateCommand(options) {
   const spinner = ora('Validating migrated data...').start();
 
   try {
-    const mongoConfig = getMongoConfig();
-    const postgresConfig = getPostgresConfig();
-    const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
-
-    if (limit !== undefined && (Number.isNaN(limit) || limit <= 0)) {
-      throw new Error('The --limit option must be a positive integer.');
-    }
+    const runtimeConfig = resolveRuntimeConfig(options, 'validate', {
+      mongo: true,
+      postgres: true,
+    });
+    const mongoConfig = runtimeConfig.mongoConfig;
+    const postgresConfig = runtimeConfig.postgresConfig;
+    const limit = runtimeConfig.limit;
 
     const result = await fetchDocuments(mongoConfig, {
-      collectionName: options.collection,
+      collectionName: runtimeConfig.collectionName,
       limit,
     });
 
@@ -330,6 +438,7 @@ async function runValidateCommand(options) {
 
     printValidationSummary(validationResult);
     printValidationGuidance(validationResult);
+    printConfigUsageInfo(runtimeConfig.loadedConfig, 'validate');
   } catch (error) {
     spinner.fail('Validation failed.');
     console.error(chalk.red(error.message));
@@ -355,6 +464,7 @@ program
 program
   .command('analyze')
   .description('Analyze MongoDB and print sample documents')
+  .option('--config <path>', 'Path to migration config JSON file')
   .option('-c, --collection <name>', 'MongoDB collection name')
   .option('-l, --limit <number>', 'Number of sample documents to fetch')
   .action(runAnalyzeCommand);
@@ -362,11 +472,13 @@ program
 program
   .command('pg-check')
   .description('Test PostgreSQL connectivity')
+  .option('--config <path>', 'Path to migration config JSON file')
   .action(runPostgresCheckCommand);
 
 program
   .command('migrate')
   .description('Migrate MongoDB documents into PostgreSQL')
+  .option('--config <path>', 'Path to migration config JSON file')
   .option('-c, --collection <name>', 'MongoDB collection name')
   .option('-l, --limit <number>', 'Number of documents to migrate')
   .option('-b, --batch-size <number>', 'Number of rows to insert per batch')
@@ -377,6 +489,7 @@ program
 program
   .command('validate')
   .description('Validate migrated PostgreSQL row counts against MongoDB source data')
+  .option('--config <path>', 'Path to migration config JSON file')
   .option('-c, --collection <name>', 'MongoDB collection name')
   .option('-l, --limit <number>', 'Number of MongoDB documents to validate')
   .action(runValidateCommand);

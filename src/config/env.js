@@ -73,7 +73,31 @@ function getPostgresConfig() {
   };
 }
 
+function mergeMongoConfig(overrides = {}) {
+  const baseConfig = getMongoConfig();
+
+  return {
+    ...baseConfig,
+    ...overrides,
+    collectionName:
+      overrides.collectionName !== undefined ? overrides.collectionName : baseConfig.collectionName,
+    sampleLimit:
+      overrides.sampleLimit !== undefined ? overrides.sampleLimit : baseConfig.sampleLimit,
+  };
+}
+
+function mergePostgresConfig(overrides = {}) {
+  const baseConfig = getPostgresConfig();
+
+  return {
+    ...baseConfig,
+    ...overrides,
+  };
+}
+
 module.exports = {
   getMongoConfig,
   getPostgresConfig,
+  mergeMongoConfig,
+  mergePostgresConfig,
 };
