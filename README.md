@@ -129,6 +129,49 @@ migratoryAI analyze --collection users --limit 5
 migratoryAI migrate --collection users --limit 5000 --batch-size 500 --retries 3 --validate
 ```
 
+### Optional: Create `migrate.config.json`
+
+MigratoryAI can also read configuration from a JSON file named `migrate.config.json` in the project root.
+
+Example:
+
+```json
+{
+  "source": {
+    "type": "mongodb",
+    "uri": "mongodb://127.0.0.1:27017",
+    "dbName": "sample_mflix",
+    "collectionName": "users"
+  },
+  "target": {
+    "type": "postgres",
+    "host": "127.0.0.1",
+    "port": 5432,
+    "user": "postgres",
+    "password": "postgres",
+    "database": "migratoryai"
+  },
+  "options": {
+    "sampleLimit": 5,
+    "limit": 1000,
+    "batchSize": 250,
+    "retries": 3,
+    "validate": true
+  }
+}
+```
+
+This file uses three main sections:
+
+- `source`
+  MongoDB connection and source collection settings.
+
+- `target`
+  PostgreSQL connection settings.
+
+- `options`
+  Migration defaults such as limit, batch size, retries, and validation.
+
 ## Environment Variables
 
 ### MongoDB
@@ -172,11 +215,41 @@ Optional alternatives:
 
 If `POSTGRES_URL` or `DATABASE_URL` is set, it can be used instead of separate `PG*` values.
 
+## Config File Option
+
+MigratoryAI supports both:
+
+- CLI flags
+- `migrate.config.json`
+
+Default behavior:
+
+- if `migrate.config.json` exists in the current working directory, the CLI can inherit it automatically
+- CLI flags override values from `migrate.config.json`
+- environment variables remain the fallback when values are not provided in the config file
+
+You can also pass a custom config file:
+
+```bash
+migratoryAI migrate --config ./my-migration-config.json
+```
+
+Supported top-level fields:
+
+- `source`
+- `target`
+- `options`
+
 ## Commands
 
 ### `migratoryAI pg-check`
 
 Checks that PostgreSQL is reachable with the configured credentials.
+
+Supports:
+
+- inherited `migrate.config.json`
+- `--config <path>` for a custom config file
 
 ### `migratoryAI analyze`
 
@@ -191,6 +264,11 @@ What it does:
 - infers relational tables
 - prints suggested SQL
 - prints suggested indexes
+
+Supports:
+
+- inherited `migrate.config.json`
+- `--config <path>` for a custom config file
 
 ### `migratoryAI migrate`
 
@@ -208,6 +286,9 @@ What it does:
 - optionally validates after migration
 
 Options:
+
+- `--config`
+  Path to a migration config JSON file.
 
 - `--collection`
   MongoDB collection to migrate.
@@ -236,6 +317,11 @@ What it does:
 - compares them against PostgreSQL target tables
 - checks fingerprint coverage and duplicates
 - tells the user whether a rerun is recommended
+
+Supports:
+
+- inherited `migrate.config.json`
+- `--config <path>` for a custom config file
 
 ## Recommended Workflow
 
