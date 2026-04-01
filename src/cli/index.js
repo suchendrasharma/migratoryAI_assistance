@@ -15,7 +15,7 @@ const {
   loadMigrationConfig,
 } = require('../config/fileConfig');
 const { analyzeDocuments } = require('../core/analyzer');
-const { migrateDocuments } = require('../core/migrator');
+const { buildRowsFromDocuments, migrateDocuments } = require('../core/migrator');
 const { validateMigration } = require('../core/validator');
 const {
   fetchDocuments,
@@ -35,6 +35,20 @@ function printRerunSafetyNote() {
   console.log('- Rows are tracked with stable source fingerprints.');
   console.log('- PostgreSQL writes use upsert semantics on those fingerprints.');
   console.log('- Re-running the same migration fills missing rows without creating duplicate entries.');
+}
+
+function printDryRunPlan(analysis, rowBuckets) {
+  const totalRows = Array.from(rowBuckets.values()).reduce((sum, rows) => sum + rows.length, 0);
+
+  console.log(chalk.cyan('\nDry-run plan:'));
+  console.log('- No PostgreSQL writes will be executed.');
+  console.log(`- Planned relational tables: ${analysis.tables.length}`);
+  console.log(`- Planned relational rows: ${totalRows}`);
+
+  analysis.tables.forEach((table) => {
+    const rowCount = (rowBuckets.get(table.tableName) || []).length;
+    console.log(`- ${table.tableName}: ${rowCount} row(s) would be written`);
+  });
 }
 
 function readPositiveIntegerOption(value, optionName) {
@@ -84,6 +98,7 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
     '--retries'
   );
   const validate = options.validate === true || configOptions.validate === true;
+  const dryRun = options.dryRun === true || configOptions.dryRun === true;
 
   const mongoOverrides = {
     uri: sourceConfig.uri,
@@ -105,7 +120,7 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
     mongoConfig: requirements.mongo
       ? (config ? mergeMongoConfig(removeUndefinedValues(mongoOverrides)) : getMongoConfig())
       : null,
-    postgresConfig: requirements.postgres
+    postgresConfig: (requirements.postgres === true || (requirements.postgres === 'if-not-dry-run' && !dryRun))
       ? (config
         ? mergePostgresConfig(removeUndefinedValues(postgresOverrides))
         : getPostgresConfig())
@@ -116,6 +131,7 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
     batchSize,
     retries,
     validate,
+    dryRun,
     loadedConfig,
     commandName,
   };
@@ -307,13 +323,14 @@ async function runMigrateCommand(options) {
   try {
     const runtimeConfig = resolveRuntimeConfig(options, 'migrate', {
       mongo: true,
-      postgres: true,
+      postgres: 'if-not-dry-run',
     });
     const mongoConfig = runtimeConfig.mongoConfig;
     const postgresConfig = runtimeConfig.postgresConfig;
     const limit = runtimeConfig.limit;
     const batchSize = runtimeConfig.batchSize || 250;
     const maxRetries = runtimeConfig.retries || 3;
+    const dryRun = runtimeConfig.dryRun;
 
     spinner.text = 'Fetching MongoDB documents...';
 
@@ -324,6 +341,24 @@ async function runMigrateCommand(options) {
 
     if (result.documents.length === 0) {
       spinner.warn(`No documents found in "${result.collectionName}".`);
+      return;
+    }
+
+    if (dryRun) {
+      const analysis = analyzeDocuments(result.documents, result.collectionName);
+      const rowBuckets = buildRowsFromDocuments(result.documents, result.collectionName);
+
+      spinner.succeed(
+        `Dry run complete for "${result.collectionName}". SQL preview generated with no database writes.`
+      );
+      printFieldAnalysis(analysis);
+      printDryRunPlan(analysis, rowBuckets);
+      printConfigUsageInfo(runtimeConfig.loadedConfig, 'migrate');
+
+      if (runtimeConfig.validate) {
+        console.log(chalk.yellow('\nValidation skipped because --dry-run does not write data to PostgreSQL.'));
+      }
+
       return;
     }
 
@@ -483,6 +518,7 @@ program
   .option('-l, --limit <number>', 'Number of documents to migrate')
   .option('-b, --batch-size <number>', 'Number of rows to insert per batch')
   .option('-r, --retries <number>', 'Retry attempts for transient PostgreSQL batch failures')
+  .option('--dry-run', 'Preview SQL and planned row counts without writing to PostgreSQL')
   .option('--validate', 'Validate PostgreSQL row counts against the MongoDB source after migration')
   .action(runMigrateCommand);
 
