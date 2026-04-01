@@ -14,6 +14,7 @@ const {
   DEFAULT_CONFIG_FILENAME,
   loadMigrationConfig,
 } = require('../config/fileConfig');
+const { explainMigrationAnalysis } = require('../ai/migrationExplainer');
 const { analyzeDocuments } = require('../core/analyzer');
 const { buildRowsFromDocuments, migrateDocuments } = require('../core/migrator');
 const { validateMigration } = require('../core/validator');
@@ -209,6 +210,17 @@ function printFieldAnalysis(analysis) {
   }
 }
 
+function printExplainMode(explanations) {
+  if (!explanations || explanations.length === 0) {
+    return;
+  }
+
+  console.log(chalk.cyan('\nWhy this mapping:'));
+  explanations.forEach((line) => {
+    console.log(`- ${line}`);
+  });
+}
+
 function printValidationSummary(validationResult) {
   console.log(chalk.cyan('\nValidation summary:'));
 
@@ -289,6 +301,11 @@ async function runAnalyzeCommand(options) {
 
     const analysis = analyzeDocuments(result.documents, result.collectionName);
     printFieldAnalysis(analysis);
+    if (options.explain) {
+      printExplainMode(
+        explainMigrationAnalysis(result.documents, analysis, result.collectionName)
+      );
+    }
     printConfigUsageInfo(runtimeConfig.loadedConfig, 'analyze');
   } catch (error) {
     spinner.fail('Unable to analyze MongoDB sample data.');
@@ -502,6 +519,7 @@ program
   .option('--config <path>', 'Path to migration config JSON file')
   .option('-c, --collection <name>', 'MongoDB collection name')
   .option('-l, --limit <number>', 'Number of sample documents to fetch')
+  .option('--explain', 'Explain why the relational mapping was inferred this way')
   .action(runAnalyzeCommand);
 
 program
