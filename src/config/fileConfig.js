@@ -72,6 +72,7 @@ function normalizeOptionsConfig(options) {
     limit: options.limit,
     batchSize: options.batchSize,
     retries: options.retries,
+    dryRun: options.dryRun,
     validate: options.validate,
     sampleLimit: options.sampleLimit,
   };
