@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MigratoryAI | AI-Powered Database Migration Tool</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <div class="noise"></div>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <div class="ambient ambient-three"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">M</span>
+        <span class="brand-name">MigratoryAI</span>
+      </div>
+
+      <nav class="topnav">
+        <a href="#features">Features</a>
+        <a href="#testers">Testers</a>
+        <a href="#signup">Access</a>
+      </nav>
+    </header>
+
+    <main class="hero-grid">
+      <section class="hero-copy">
+        <p class="eyebrow reveal rise-1">AI-Powered Database Migration</p>
+        <h1>
+          Build your
+          <span class="hero-accent">AI-powered</span>
+          migration path from NoSQL to SQL.
+        </h1>
+        <p class="hero-text reveal rise-3">
+          MigratoryAI gives engineering teams a clear path from nested NoSQL documents and
+          document databases to
+          SQL-ready tables, foreign keys, validation checks, and safe reruns. Analyze first,
+          explain every decision, preview the SQL, then migrate with confidence.
+        </p>
+
+        <div class="hero-actions reveal rise-4">
+          <a class="button button-primary" href="#signup">Get product updates</a>
+          <a class="button button-secondary" href="#testers">Become an early tester</a>
+        </div>
+
+        <div class="hero-badges reveal rise-5">
+          <span>Explain mode</span>
+          <span>Dry-run preview</span>
+          <span>Safe reruns</span>
+          <span>Validation built in</span>
+        </div>
+
+        <div class="trust-strip reveal rise-6">
+          <article>
+            <strong>Schema inference</strong>
+            <span>Turns nested NoSQL data into structured relational tables</span>
+          </article>
+          <article>
+            <strong>Safe reruns</strong>
+            <span>Fingerprint-based upserts protect against duplicate inserts</span>
+          </article>
+          <article>
+            <strong>Validation</strong>
+            <span>Checks PostgreSQL counts against NoSQL-derived expectations</span>
+          </article>
+        </div>
+      </section>
+
+      <aside class="hero-panel reveal rise-2">
+        <div class="terminal-card floating-card">
+          <div class="terminal-top">
+            <div class="terminal-dots">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <span class="terminal-label">migratoryAI analyze --explain</span>
+          </div>
+
+          <div class="terminal-body">
+            <p><span class="prompt">$</span> migratoryAI analyze --explain</p>
+            <p>Analyzing collection <span>'users'</span>...</p>
+            <p>Collection contains <span>2,536 records</span>.</p>
+            <p>Detected child table <span>'orders'</span> because it is an array of objects.</p>
+            <p>Created foreign key <span>user_id</span> to preserve the parent-child relationship.</p>
+            <p>Suggested index on <span>orders.user_id</span> for faster joins.</p>
+            <div class="sql-preview">
+              <p>CREATE TABLE users (...);</p>
+              <p>CREATE TABLE orders (...);</p>
+              <p>FOREIGN KEY (user_id) REFERENCES users(id);</p>
+            </div>
+
+            <div class="schema-flow">
+              <div class="schema-node">
+                <strong>users</strong>
+                <span>(id, name, age, email)</span>
+              </div>
+              <div class="schema-arrow">-></div>
+              <div class="schema-node">
+                <strong>orders</strong>
+                <span>(id, user_id, product, price)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stack-card floating-card floating-card-delayed">
+          <div class="stack-item mongo">
+            <span class="stack-icon">NoSQL Source</span>
+          </div>
+          <div class="stack-flow">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div class="stack-item postgres">
+            <span class="stack-icon">SQL Target</span>
+          </div>
+        </div>
+
+        <div class="proof-card reveal rise-4">
+          <p class="proof-kicker">Why teams care</p>
+          <h3>Migration visibility before data moves.</h3>
+          <p>
+            See why tables are created, why references exist, and how rerun-safe migration
+            protects teams when a batch needs to be replayed.
+          </p>
+        </div>
+      </aside>
+    </main>
+
+    <section class="feature-section" id="features">
+      <div class="section-heading">
+        <p class="eyebrow">Product snapshot</p>
+        <h2>The migration layer for teams who want speed and proof.</h2>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-card">
+          <h3>Analyze first</h3>
+          <p>Inspect sample documents, infer tables, and understand the relational mapping before touching the target database.</p>
+        </article>
+
+        <article class="feature-card">
+          <h3>Dry-run preview</h3>
+          <p>Generate SQL output and planned row counts without making any PostgreSQL writes.</p>
+        </article>
+
+        <article class="feature-card">
+          <h3>Migration at scale</h3>
+          <p>Batch-based migration with retries, transactions, and validation checks for serious movement, not toy demos.</p>
+        </article>
+
+        <article class="feature-card">
+          <h3>AI assistant layer</h3>
+          <p>Explain mode helps engineers understand why certain tables, foreign keys, and indexes are created from NoSQL data.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="tester-section" id="testers">
+      <div class="section-heading">
+        <p class="eyebrow">Early access</p>
+        <h2>Looking for testers and small businesses that want hands-on access before general rollout.</h2>
+      </div>
+
+      <div class="tester-grid">
+        <article class="tester-card">
+          <span class="tester-tag">For testers</span>
+          <h3>Help shape the product</h3>
+          <p>
+            If you enjoy testing developer tools, breaking edge cases, and giving direct feedback,
+            we want you in the first wave. You will get early visibility into explain mode, dry-run,
+            and validation improvements.
+          </p>
+          <ul>
+            <li>Try pre-release workflows</li>
+            <li>Share migration edge cases</li>
+            <li>Influence the roadmap early</li>
+          </ul>
+        </article>
+
+        <article class="tester-card highlight-card">
+          <span class="tester-tag">For small businesses</span>
+          <h3>Limited testing access</h3>
+          <p>
+            If your team needs to move data from NoSQL systems into SQL databases and wants lightweight,
+            guided testing access, you can register interest for a limited rollout.
+          </p>
+          <ul>
+            <li>Early product walkthroughs</li>
+            <li>Migration feedback sessions</li>
+            <li>Priority access to limited test slots</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="involve-grid">
+        <article class="involve-card">
+          <p class="eyebrow">Tester involvement</p>
+          <h3>Bring real edge cases.</h3>
+          <p>
+            We want developers and QA-minded builders who can throw nested documents,
+            partial failures, and rerun scenarios at the engine and tell us where it needs to improve.
+          </p>
+        </article>
+
+        <article class="involve-card accent-card">
+          <p class="eyebrow">Limited business access</p>
+          <h3>Try MigratoryAI with a real migration problem.</h3>
+          <p>
+            Small businesses with active NoSQL to SQL migration needs can request limited
+            testing access and help validate the product against production-shaped workloads.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="signup-section" id="signup">
+      <div class="signup-copy">
+        <p class="eyebrow">Register interest</p>
+        <h2>Join the list for launch updates, tester invites, and limited access drops.</h2>
+        <p>
+          Register your email if you want product news, early tester involvement,
+          or small-business access to limited migration testing.
+        </p>
+      </div>
+
+      <form class="signup-form">
+        <label for="email" class="sr-only">Email address</label>
+        <input id="email" name="email" type="email" placeholder="Enter your work email" required>
+        <button type="submit">Register email</button>
+        <small>Used for launch updates, tester invites, and limited access announcements.</small>
+      </form>
+    </section>
+  </div>
+</body>
+</html>
