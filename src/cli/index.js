@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 const { Command } = require('commander');
 const chalk = require('chalk');
 const ora = require('ora').default;
@@ -28,8 +26,6 @@ const {
   withPostgresTransaction,
   closePostgresConnection,
 } = require('../db/pgConnector');
-
-const program = new Command();
 
 function printRerunSafetyNote() {
   console.log(chalk.cyan('\nRerun safety:'));
@@ -501,51 +497,77 @@ async function runValidateCommand(options) {
   }
 }
 
-program
-  .name('migratoryAI')
-  .description('AI-powered DB migration tool')
-  .version('1.0.0');
+function createProgram() {
+  const program = new Command();
 
-program
-  .command('init')
-  .description('Initialize migration project')
-  .action(() => {
-    console.log(chalk.green('MigratoryAI initialized!'));
+  program
+    .name('migratoryai')
+    .description('AI-powered NoSQL to SQL migration CLI')
+    .version('1.0.0');
+
+  program
+    .command('init')
+    .description('Initialize migration project')
+    .action(() => {
+      console.log(chalk.green('MigratoryAI initialized!'));
+    });
+
+  program
+    .command('analyze')
+    .description('Analyze MongoDB and print sample documents')
+    .option('--config <path>', 'Path to migration config JSON file')
+    .option('-c, --collection <name>', 'MongoDB collection name')
+    .option('-l, --limit <number>', 'Number of sample documents to fetch')
+    .option('--explain', 'Explain why the relational mapping was inferred this way')
+    .action(runAnalyzeCommand);
+
+  program
+    .command('pg-check')
+    .description('Test PostgreSQL connectivity')
+    .option('--config <path>', 'Path to migration config JSON file')
+    .action(runPostgresCheckCommand);
+
+  program
+    .command('migrate')
+    .description('Migrate MongoDB documents into PostgreSQL')
+    .option('--config <path>', 'Path to migration config JSON file')
+    .option('-c, --collection <name>', 'MongoDB collection name')
+    .option('-l, --limit <number>', 'Number of documents to migrate')
+    .option('-b, --batch-size <number>', 'Number of rows to insert per batch')
+    .option('-r, --retries <number>', 'Retry attempts for transient PostgreSQL batch failures')
+    .option('--dry-run', 'Preview SQL and planned row counts without writing to PostgreSQL')
+    .option('--validate', 'Validate PostgreSQL row counts against the MongoDB source after migration')
+    .action(runMigrateCommand);
+
+  program
+    .command('validate')
+    .description('Validate migrated PostgreSQL row counts against MongoDB source data')
+    .option('--config <path>', 'Path to migration config JSON file')
+    .option('-c, --collection <name>', 'MongoDB collection name')
+    .option('-l, --limit <number>', 'Number of MongoDB documents to validate')
+    .action(runValidateCommand);
+
+  return program;
+}
+
+async function runCli(argv = process.argv) {
+  const program = createProgram();
+  await program.parseAsync(argv);
+  return program;
+}
+
+module.exports = {
+  createProgram,
+  runCli,
+  runAnalyzeCommand,
+  runPostgresCheckCommand,
+  runMigrateCommand,
+  runValidateCommand,
+};
+
+if (require.main === module) {
+  runCli().catch((error) => {
+    console.error(chalk.red(error.message));
+    process.exitCode = 1;
   });
-
-program
-  .command('analyze')
-  .description('Analyze MongoDB and print sample documents')
-  .option('--config <path>', 'Path to migration config JSON file')
-  .option('-c, --collection <name>', 'MongoDB collection name')
-  .option('-l, --limit <number>', 'Number of sample documents to fetch')
-  .option('--explain', 'Explain why the relational mapping was inferred this way')
-  .action(runAnalyzeCommand);
-
-program
-  .command('pg-check')
-  .description('Test PostgreSQL connectivity')
-  .option('--config <path>', 'Path to migration config JSON file')
-  .action(runPostgresCheckCommand);
-
-program
-  .command('migrate')
-  .description('Migrate MongoDB documents into PostgreSQL')
-  .option('--config <path>', 'Path to migration config JSON file')
-  .option('-c, --collection <name>', 'MongoDB collection name')
-  .option('-l, --limit <number>', 'Number of documents to migrate')
-  .option('-b, --batch-size <number>', 'Number of rows to insert per batch')
-  .option('-r, --retries <number>', 'Retry attempts for transient PostgreSQL batch failures')
-  .option('--dry-run', 'Preview SQL and planned row counts without writing to PostgreSQL')
-  .option('--validate', 'Validate PostgreSQL row counts against the MongoDB source after migration')
-  .action(runMigrateCommand);
-
-program
-  .command('validate')
-  .description('Validate migrated PostgreSQL row counts against MongoDB source data')
-  .option('--config <path>', 'Path to migration config JSON file')
-  .option('-c, --collection <name>', 'MongoDB collection name')
-  .option('-l, --limit <number>', 'Number of MongoDB documents to validate')
-  .action(runValidateCommand);
-
-program.parse(process.argv);
+}
