@@ -1,6 +1,6 @@
-# MigratoryAI Assistance
+# MigratoryAI
 
-MigratoryAI is a CLI data migration engine for moving data from MongoDB to PostgreSQL safely.
+MigratoryAI is a production-ready CLI package for moving NoSQL data into SQL systems safely.
 
 It is designed for nested NoSQL documents, relational inference, rerun-safe migrations, and post-migration validation.
 
@@ -87,9 +87,32 @@ MigratoryAI is built to support reruns when a migration is interrupted or partia
 
 If a target table already contains rows without migration fingerprints, the tool stops before continuing idempotent migration. This prevents unmanaged legacy rows from mixing with rerun-safe migrated rows.
 
+## Install And Run
+
+### Option 1. Run with `npx`
+
+No install required:
+
+```bash
+npx migratoryai --help
+```
+
+### Option 2. Install globally
+
+```bash
+npm install -g migratoryai
+```
+
+After global install you can run either:
+
+```bash
+migratoryai --help
+migratoryAI --help
+```
+
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Install dependencies for local development
 
 ```bash
 npm install
@@ -114,19 +137,19 @@ PGDATABASE=migratoryai
 ### 3. Check PostgreSQL
 
 ```bash
-migratoryAI pg-check
+migratoryai pg-check
 ```
 
 ### 4. Analyze sample MongoDB data
 
 ```bash
-migratoryAI analyze --collection users --limit 5
+migratoryai analyze --collection users --limit 5
 ```
 
 ### 5. Migrate with validation
 
 ```bash
-migratoryAI migrate --collection users --limit 5000 --batch-size 500 --retries 3 --validate
+migratoryai migrate --collection users --limit 5000 --batch-size 500 --retries 3 --validate
 ```
 
 ### Optional: Create `migrate.config.json`
@@ -231,7 +254,7 @@ Default behavior:
 You can also pass a custom config file:
 
 ```bash
-migratoryAI migrate --config ./my-migration-config.json
+migratoryai migrate --config ./my-migration-config.json
 ```
 
 Supported top-level fields:
@@ -240,9 +263,24 @@ Supported top-level fields:
 - `target`
 - `options`
 
+## Package Structure
+
+The published npm package includes:
+
+- `bin/migratoryai.js`
+  The executable entrypoint used by `npx` and global installs.
+
+- `src/`
+  CLI, config loading, analyzers, connectors, migrator, and validator logic.
+
+- `index.js`
+  Root module export for package consumers.
+
+The package excludes frontend assets and repo-only development files from the published tarball.
+
 ## Commands
 
-### `migratoryAI pg-check`
+### `migratoryai pg-check`
 
 Checks that PostgreSQL is reachable with the configured credentials.
 
@@ -251,10 +289,10 @@ Supports:
 - inherited `migrate.config.json`
 - `--config <path>` for a custom config file
 
-### `migratoryAI analyze`
+### `migratoryai analyze`
 
 ```bash
-migratoryAI analyze --collection users --limit 5
+migratoryai analyze --collection users --limit 5
 ```
 
 What it does:
@@ -270,10 +308,10 @@ Supports:
 - inherited `migrate.config.json`
 - `--config <path>` for a custom config file
 
-### `migratoryAI migrate`
+### `migratoryai migrate`
 
 ```bash
-migratoryAI migrate --collection users --limit 1000 --batch-size 250 --retries 3 --validate
+migratoryai migrate --collection users --limit 1000 --batch-size 250 --retries 3 --validate
 ```
 
 What it does:
@@ -305,10 +343,10 @@ Options:
 - `--validate`
   Runs validation after migration.
 
-### `migratoryAI validate`
+### `migratoryai validate`
 
 ```bash
-migratoryAI validate --collection users --limit 1000
+migratoryai validate --collection users --limit 1000
 ```
 
 What it does:
@@ -326,9 +364,9 @@ Supports:
 ## Recommended Workflow
 
 1. Configure `.env`
-2. Run `migratoryAI pg-check`
-3. Run `migratoryAI analyze --collection <name> --limit <n>`
-4. Run `migratoryAI migrate --collection <name> --limit <n> --batch-size <n> --retries <n> --validate`
+2. Run `migratoryai pg-check`
+3. Run `migratoryai analyze --collection <name> --limit <n>`
+4. Run `migratoryai migrate --collection <name> --limit <n> --batch-size <n> --retries <n> --validate`
 5. If validation recommends a rerun, run the same migrate command again
 
 Because the migration is fingerprint-based and uses PostgreSQL upserts, rerunning the same dataset does not create duplicate rows.
@@ -394,6 +432,6 @@ Possible future improvements:
 On Windows PowerShell, if the `.ps1` shim is blocked by execution policy, use the `.cmd` shim instead:
 
 ```powershell
-migratoryAI.cmd --help
+migratoryai.cmd --help
 npm.cmd test
 ```

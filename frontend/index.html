@@ -24,6 +24,7 @@
 
       <nav class="topnav">
         <a href="#features">Features</a>
+        <a href="./docs.html">Docs</a>
         <a href="#testers">Testers</a>
         <a href="#signup">Access</a>
       </nav>
@@ -40,20 +41,20 @@
         <p class="hero-text reveal rise-3">
           MigratoryAI gives engineering teams a clear path from nested NoSQL documents and
           document databases to
-          SQL-ready tables, foreign keys, validation checks, and safe reruns. Analyze first,
-          explain every decision, preview the SQL, then migrate with confidence.
+          SQL-ready tables, foreign keys, validation checks, and safe reruns. Use it today
+          with npm or npx, then join the list to shape what comes next.
         </p>
 
         <div class="hero-actions reveal rise-4">
-          <a class="button button-primary" href="#signup">Get product updates</a>
-          <a class="button button-secondary" href="#testers">Become an early tester</a>
+          <a class="button button-primary" href="https://www.npmjs.com/package/migratoryai" target="_blank" rel="noreferrer">Get the npm package</a>
+          <a class="button button-secondary" href="./docs.html">Read the docs</a>
         </div>
 
         <div class="hero-badges reveal rise-5">
+          <span>npm install -g migratoryai</span>
+          <span>npx migratoryai</span>
           <span>Explain mode</span>
-          <span>Dry-run preview</span>
           <span>Safe reruns</span>
-          <span>Validation built in</span>
         </div>
 
         <div class="trust-strip reveal rise-6">
@@ -125,15 +126,45 @@
         </div>
 
         <div class="proof-card reveal rise-4">
-          <p class="proof-kicker">Why teams care</p>
-          <h3>Migration visibility before data moves.</h3>
+          <p class="proof-kicker">Now live on npm</p>
+          <h3>Install it fast. Understand every step.</h3>
           <p>
-            See why tables are created, why references exist, and how rerun-safe migration
-            protects teams when a batch needs to be replayed.
+            Run MigratoryAI with `npx migratoryai` for zero-install trials or install it globally
+            for repeatable migration workflows across your team.
           </p>
         </div>
       </aside>
     </main>
+
+    <section class="launch-section" id="launch">
+      <div class="section-heading">
+        <p class="eyebrow">Start here</p>
+        <h2>Use the package now, then join the next wave of product access.</h2>
+      </div>
+
+      <div class="launch-grid">
+        <article class="launch-card launch-card-primary">
+          <p class="launch-label">Instant usage</p>
+          <h3>Try it with npx</h3>
+          <pre><code>npx migratoryai --help</code></pre>
+          <p>No install needed when you want to test the CLI or share a quick migration preview.</p>
+        </article>
+
+        <article class="launch-card">
+          <p class="launch-label">Team setup</p>
+          <h3>Install it globally</h3>
+          <pre><code>npm install -g migratoryai</code></pre>
+          <p>Get a stable command for repeat migration work, validation runs, and dry-run previews.</p>
+        </article>
+
+        <article class="launch-card">
+          <p class="launch-label">Package link</p>
+          <h3>Open the npm page</h3>
+          <p>Browse the package, share it with your team, and track installation from the public registry.</p>
+          <a class="text-link" href="https://www.npmjs.com/package/migratoryai" target="_blank" rel="noreferrer">https://www.npmjs.com/package/migratoryai</a>
+        </article>
+      </div>
+    </section>
 
     <section class="feature-section" id="features">
       <div class="section-heading">
@@ -160,6 +191,40 @@
         <article class="feature-card">
           <h3>AI assistant layer</h3>
           <p>Explain mode helps engineers understand why certain tables, foreign keys, and indexes are created from NoSQL data.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="vision-section" id="updates">
+      <div class="section-heading">
+        <p class="eyebrow">What comes next</p>
+        <h2>The product is being shaped to get smarter with every migration.</h2>
+      </div>
+
+      <div class="vision-grid">
+        <article class="vision-card">
+          <h3>Learning from real migration patterns</h3>
+          <p>
+            Over time, MigratoryAI is intended to learn from repeated migration flows,
+            edge cases, and schema decisions so future runs can feel faster, clearer,
+            and more context-aware.
+          </p>
+        </article>
+
+        <article class="vision-card">
+          <h3>More helpful recommendations</h3>
+          <p>
+            We are moving toward a system that can suggest stronger mappings, safer defaults,
+            and more useful migration guidance based on the shape and behavior of source data.
+          </p>
+        </article>
+
+        <article class="vision-card">
+          <h3>Smarter prediction and planning</h3>
+          <p>
+            Longer term, the goal is to make schema prediction and migration planning more adaptive,
+            so the engine can choose better strategies before large data movement begins.
+          </p>
         </article>
       </div>
     </section>
@@ -224,21 +289,34 @@
 
     <section class="signup-section" id="signup">
       <div class="signup-copy">
-        <p class="eyebrow">Register interest</p>
-        <h2>Join the list for launch updates, tester invites, and limited access drops.</h2>
+        <p class="eyebrow">Join in</p>
+        <h2>Join the list for product updates, tester invites, and limited access drops.</h2>
         <p>
-          Register your email if you want product news, early tester involvement,
-          or small-business access to limited migration testing.
+          Register your email if you want release updates, docs announcements, early tester
+          involvement, or small-business access to limited migration testing.
         </p>
       </div>
 
-      <form class="signup-form">
+      <form class="signup-form" id="signup-form">
         <label for="email" class="sr-only">Email address</label>
         <input id="email" name="email" type="email" placeholder="Enter your work email" required>
         <button type="submit">Register email</button>
+        <p class="form-feedback" id="form-feedback" aria-live="polite"></p>
         <small>Used for launch updates, tester invites, and limited access announcements.</small>
       </form>
     </section>
   </div>
+  <div class="signup-modal" id="signup-modal" aria-hidden="true">
+    <div class="signup-modal-card" role="dialog" aria-modal="true" aria-labelledby="signup-modal-title">
+      <button class="signup-modal-close" id="signup-modal-close" type="button" aria-label="Close message">x</button>
+      <p class="eyebrow">Registration received</p>
+      <h3 id="signup-modal-title">You are on the list.</h3>
+      <p class="signup-modal-text" id="signup-modal-text">
+        We will reach out with tester updates and limited access information.
+      </p>
+      <button class="button button-primary signup-modal-action" id="signup-modal-action" type="button">Close</button>
+    </div>
+  </div>
+  <script src="./app.js"></script>
 </body>
 </html>

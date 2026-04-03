@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MigratoryAI Docs | NoSQL to SQL Migration CLI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell docs-shell">
+    <div class="noise"></div>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <div class="ambient ambient-three"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">M</span>
+        <span class="brand-name">MigratoryAI</span>
+      </div>
+
+      <nav class="topnav">
+        <a href="./index.html">Home</a>
+        <a href="https://www.npmjs.com/package/migratoryai" target="_blank" rel="noreferrer">npm</a>
+      </nav>
+    </header>
+
+    <section class="docs-hero">
+      <p class="eyebrow">Documentation</p>
+      <h1>Everything you need to run MigratoryAI with npm or npx.</h1>
+      <p class="hero-text">
+        MigratoryAI is a CLI package for analyzing NoSQL data, inferring SQL-ready structure,
+        previewing migration output, migrating in batches, and validating results.
+      </p>
+
+      <div class="hero-actions">
+        <a class="button button-primary" href="https://www.npmjs.com/package/migratoryai" target="_blank" rel="noreferrer">Open npm package</a>
+        <a class="button button-secondary" href="./index.html#signup">Join the list</a>
+      </div>
+    </section>
+
+    <main class="docs-layout">
+      <aside class="docs-nav-card">
+        <p class="docs-nav-title">On this page</p>
+        <a href="#install">Install</a>
+        <a href="#quickstart">Quick start</a>
+        <a href="#commands">Commands</a>
+        <a href="#config">Configuration</a>
+        <a href="#safety">Safety</a>
+      </aside>
+
+      <div class="docs-content">
+        <section class="docs-card" id="install">
+          <p class="eyebrow">Install</p>
+          <h2>Choose the way you want to run it.</h2>
+
+          <div class="docs-command-grid">
+            <article class="docs-command-card">
+              <h3>npx</h3>
+              <pre><code>npx migratoryai --help</code></pre>
+              <p>Best for trying the CLI quickly with no global install.</p>
+            </article>
+
+            <article class="docs-command-card">
+              <h3>Global install</h3>
+              <pre><code>npm install -g migratoryai</code></pre>
+              <p>Best for regular use across projects and migration workflows.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="docs-card" id="quickstart">
+          <p class="eyebrow">Quick start</p>
+          <h2>Basic workflow</h2>
+          <ol class="docs-steps">
+            <li>Create your `.env` or `migrate.config.json`.</li>
+            <li>Check your target SQL database connection.</li>
+            <li>Analyze the source collection.</li>
+            <li>Preview with dry-run or run a real migration.</li>
+            <li>Validate counts after migration.</li>
+          </ol>
+
+          <pre><code>migratoryai pg-check
+migratoryai analyze --collection users --limit 5
+migratoryai migrate --collection users --limit 500 --batch-size 100 --validate
+</code></pre>
+        </section>
+
+        <section class="docs-card" id="commands">
+          <p class="eyebrow">Commands</p>
+          <h2>Core CLI commands</h2>
+
+          <div class="docs-command-list">
+            <article>
+              <h3>`migratoryai analyze`</h3>
+              <p>Fetch sample source data, infer the relational shape, and print SQL suggestions.</p>
+            </article>
+            <article>
+              <h3>`migratoryai migrate`</h3>
+              <p>Move source data into SQL with batching, retries, and optional validation.</p>
+            </article>
+            <article>
+              <h3>`migratoryai validate`</h3>
+              <p>Compare expected row counts from source data against the SQL target.</p>
+            </article>
+            <article>
+              <h3>`migratoryai pg-check`</h3>
+              <p>Verify target database connectivity before running migrations.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="docs-card" id="config">
+          <p class="eyebrow">Configuration</p>
+          <h2>Use `.env`, `migrate.config.json`, or CLI flags.</h2>
+
+          <pre><code>{
+  "source": {
+    "type": "mongodb",
+    "uri": "mongodb://127.0.0.1:27017",
+    "dbName": "sample_mflix",
+    "collectionName": "users"
+  },
+  "target": {
+    "type": "postgres",
+    "host": "127.0.0.1",
+    "port": 5432,
+    "user": "postgres",
+    "password": "postgres",
+    "database": "migratoryai"
+  },
+  "options": {
+    "limit": 1000,
+    "batchSize": 250,
+    "retries": 3,
+    "validate": true
+  }
+}</code></pre>
+
+          <p class="docs-note">CLI flags override config-file values, and config values override environment fallbacks.</p>
+        </section>
+
+        <section class="docs-card" id="safety">
+          <p class="eyebrow">Safety</p>
+          <h2>Built for reruns, validation, and migration confidence.</h2>
+          <ul class="docs-points">
+            <li>Dry-run mode previews SQL and planned rows before writing.</li>
+            <li>Fingerprint-based upserts support safe reruns without duplicate rows.</li>
+            <li>Validation compares expected source-derived counts to the SQL target.</li>
+            <li>Batch retries and transaction handling improve reliability during longer runs.</li>
+          </ul>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
