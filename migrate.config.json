@@ -1,0 +1,23 @@
+{
+  "source": {
+    "type": "mongodb",
+    "uri": "mongodb://127.0.0.1:27017",
+    "dbName": "sample_mflix",
+    "collectionName": "users"
+  },
+  "target": {
+    "type": "postgres",
+    "host": "127.0.0.1",
+    "port": 5432,
+    "user": "postgres",
+    "password": "postgres",
+    "database": "migratoryai"
+  },
+  "options": {
+    "sampleLimit": 5,
+    "limit": 1000,
+    "batchSize": 250,
+    "retries": 3,
+    "validate": true
+  }
+}
