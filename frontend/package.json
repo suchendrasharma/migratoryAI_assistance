@@ -1,0 +1,9 @@
+{
+  "name": "migratoryai-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "dependencies": {
+    "mongodb": "^7.1.1"
+  }
+}

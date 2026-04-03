@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'migratoryai_waitlist_signups';
+const WAITLIST_API_URL = '/api/waitlist';
 
 function loadSignups() {
   try {
@@ -21,6 +22,24 @@ function setFeedback(message, type) {
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+async function submitSignupToServer(email) {
+  const response = await fetch(WAITLIST_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || 'Unable to save signup right now.');
+  }
+
+  return payload;
 }
 
 function openModal(message) {
@@ -60,7 +79,7 @@ function initSignupCapture() {
 
   let signups = loadSignups();
 
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
 
     const email = emailInput.value.trim().toLowerCase();
@@ -77,17 +96,36 @@ function initSignupCapture() {
       return;
     }
 
-    const nextSignup = {
-      email,
-      createdAt: new Date().toISOString(),
-    };
+    const submitButton = form.querySelector('button[type="submit"]');
 
-    signups = [...signups, nextSignup];
-    saveSignups(signups);
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = 'Saving...';
+    }
 
-    form.reset();
-    setFeedback('Email captured successfully.', 'success');
-    openModal('Thanks for registering. We will reach out with tester updates and limited access information.');
+    try {
+      await submitSignupToServer(email);
+
+      const nextSignup = {
+        email,
+        createdAt: new Date().toISOString(),
+      };
+
+      signups = [...signups, nextSignup];
+      saveSignups(signups);
+
+      form.reset();
+      setFeedback('Email captured successfully.', 'success');
+      openModal('Thanks for registering. We have saved your email and will reach out with tester updates and limited access information.');
+    } catch (error) {
+      setFeedback(error.message, 'error');
+      openModal('We could not save your signup right now. Please try again in a moment.');
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Register email';
+      }
+    }
   });
 
   if (closeButton) {
