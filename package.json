@@ -1,0 +1,54 @@
+{
+  "name": "migratoryai",
+  "version": "1.0.0",
+  "description": "AI-powered NoSQL to SQL migration CLI with analysis, dry-run previews, rerun-safe migration, and validation.",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "scripts": {
+    "test": "node test/idempotent-migration.test.js",
+    "seed:loadtest": "node scripts/generateLoadTestData.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/suchendrasharma/migratoryAI_assistance.git"
+  },
+  "bin": {
+    "migratoryai": "bin/migratoryai.js",
+    "migratoryAI": "bin/migratoryai.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "index.js",
+    "README.md"
+  ],
+  "keywords": [
+    "cli",
+    "migration",
+    "nosql",
+    "sql",
+    "mongodb",
+    "postgresql"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "preferGlobal": true,
+  "bugs": {
+    "url": "https://github.com/suchendrasharma/migratoryAI_assistance/issues"
+  },
+  "homepage": "https://github.com/suchendrasharma/migratoryAI_assistance#readme",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^14.0.3",
+    "dotenv": "^17.3.1",
+    "mongodb": "^7.1.1",
+    "ora": "^9.3.0",
+    "pg": "^8.20.0"
+  }
+}
