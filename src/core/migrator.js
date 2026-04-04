@@ -1,18 +1,11 @@
 const crypto = require('crypto');
 
 const { analyzeDocuments } = require('./analyzer');
+const { assertValidUnifiedSchemaModel } = require('./unifiedSchemaModel');
+const { getTargetAdapter } = require('../plugins/registry');
 
 const DEFAULT_BATCH_SIZE = 250;
 const DEFAULT_MAX_RETRIES = 3;
-const RETRYABLE_ERROR_CODES = new Set([
-  '40001',
-  '40P01',
-  '53300',
-  '57P01',
-  'ETIMEDOUT',
-  'ECONNRESET',
-  'ECONNREFUSED',
-]);
 
 function toSnakeCase(value) {
   return String(value)
@@ -142,8 +135,13 @@ function resolveObjectIdentity(item) {
   return hashValue(item);
 }
 
-function buildRowsFromDocuments(documents, collectionName) {
-  const rootTableName = normalizeTableName(collectionName);
+function buildRowsFromDocuments(documents, collectionNameOrModel) {
+  const unifiedSchemaModel = collectionNameOrModel && typeof collectionNameOrModel === 'object'
+    ? assertValidUnifiedSchemaModel(collectionNameOrModel)
+    : null;
+  const rootTableName = unifiedSchemaModel
+    ? unifiedSchemaModel.rootEntity
+    : normalizeTableName(collectionNameOrModel);
   const rowBuckets = new Map();
 
   function processDocument({
@@ -303,303 +301,23 @@ function buildRowsFromDocuments(documents, collectionName) {
   return rowBuckets;
 }
 
-function withIfNotExists(statement) {
-  return statement.replace(/^CREATE TABLE /, 'CREATE TABLE IF NOT EXISTS ');
-}
-
-function withIndexIfNotExists(statement) {
-  return statement.replace(/^CREATE INDEX /, 'CREATE INDEX IF NOT EXISTS ');
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function isRetryableError(error) {
-  return RETRYABLE_ERROR_CODES.has(error.code);
-}
-
-function chunkRows(rows, batchSize) {
-  const chunks = [];
-
-  for (let index = 0; index < rows.length; index += batchSize) {
-    chunks.push(rows.slice(index, index + batchSize));
-  }
-
-  return chunks;
-}
-
-function buildColumnGroups(rows, table) {
-  const groups = new Map();
-
-  rows.forEach((row) => {
-    const columns = table.columns
-      .map((column) => column.name)
-      .filter((columnName) => row[columnName] !== undefined)
-      .concat('source_fingerprint')
-      .filter((columnName, index, items) => items.indexOf(columnName) === index);
-    const key = columns.join('|');
-
-    if (!groups.has(key)) {
-      groups.set(key, {
-        columns,
-        rows: [],
-      });
-    }
-
-    groups.get(key).rows.push(row);
-  });
-
-  return Array.from(groups.values());
-}
-
-function buildBatchInsertStatement(tableName, columns, rows) {
-  const values = [];
-  const valueGroups = rows.map((row, rowIndex) => {
-    const placeholders = columns.map((columnName, columnIndex) => {
-      values.push(row[columnName]);
-      return `$${rowIndex * columns.length + columnIndex + 1}`;
-    });
-
-    return `(${placeholders.join(', ')})`;
-  });
-
-  const updatableColumns = columns.filter(
-    (column) => column !== 'id' && column !== 'source_fingerprint'
-  );
-  const updateClause = updatableColumns.length > 0
-    ? updatableColumns
-      .map((column) => `${column} = EXCLUDED.${column}`)
-      .join(', ')
-    : 'source_fingerprint = EXCLUDED.source_fingerprint';
-
-  return {
-    text: `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES ${valueGroups.join(', ')} ON CONFLICT (source_fingerprint) DO UPDATE SET ${updateClause} RETURNING id, source_fingerprint`,
-    values,
-  };
-}
-
-async function ensureMigrationMetadataColumns(client, tableName) {
-  await client.query(
-    `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS source_fingerprint TEXT`
-  );
-  await client.query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS ux_${tableName}_source_fingerprint ON ${tableName} (source_fingerprint)`
-  );
-}
-
-async function createSchema(client, analysis) {
-  for (const statement of analysis.sqlStatements) {
-    await client.query(withIfNotExists(statement));
-  }
-
-  for (const table of analysis.tables) {
-    await ensureMigrationMetadataColumns(client, table.tableName);
-  }
-
-  for (const indexSuggestion of analysis.indexSuggestions) {
-    await client.query(withIndexIfNotExists(indexSuggestion.sql));
-  }
-}
-
-async function assertTablesReadyForIdempotentMigration(client, analysis) {
-  for (const table of analysis.tables) {
-    const result = await client.query(
-      `SELECT COUNT(*)::int AS total_rows, COUNT(source_fingerprint)::int AS fingerprinted_rows FROM ${table.tableName}`
-    );
-    const totalRows = result.rows[0].total_rows;
-    const fingerprintedRows = result.rows[0].fingerprinted_rows;
-
-    if (totalRows > 0 && totalRows !== fingerprintedRows) {
-      throw new Error(
-        `Target table "${table.tableName}" contains ${totalRows - fingerprintedRows} legacy row(s) without migration fingerprints. Clean or backfill that table before running idempotent migration.`
-      );
-    }
-  }
-}
-
-function buildIdMap() {
-  return new Map();
-}
-
-function getTableForeignKeyColumn(table) {
-  const foreignKeyColumn = table.columns.find((column) => column.isForeignKey);
-  return foreignKeyColumn ? foreignKeyColumn.name : null;
-}
-
-function hydrateParentReferences(table, rows, idMaps) {
-  const foreignKeyColumn = getTableForeignKeyColumn(table);
-
-  if (!foreignKeyColumn || !table.parentTableName) {
-    return rows;
-  }
-
-  const parentMap = idMaps.get(table.parentTableName) || new Map();
-
-  return rows.map((row) => {
-    const parentFingerprint = row.__parentFingerprint;
-
-    if (!parentFingerprint) {
-      return row;
-    }
-
-    if (!parentMap.has(parentFingerprint)) {
-      throw new Error(
-        `Missing parent mapping for table "${table.tableName}" with parent fingerprint "${parentFingerprint}".`
-      );
-    }
-
-    return {
-      ...row,
-      [foreignKeyColumn]: parentMap.get(parentFingerprint),
-    };
-  });
-}
-
-async function runBatchWithRetry({
-  client,
-  tableName,
-  batchRows,
-  columns,
-  batchNumber,
-  batchCount,
-  maxRetries,
-  onProgress,
-}) {
-  const statement = buildBatchInsertStatement(tableName, columns, batchRows);
-
-  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
-    const savepointName = `sp_${tableName}_${batchNumber}_${attempt}`;
-
-    await client.query(`SAVEPOINT ${savepointName}`);
-
-    try {
-      const result = await client.query(statement.text, statement.values);
-      await client.query(`RELEASE SAVEPOINT ${savepointName}`);
-      return result.rows;
-    } catch (error) {
-      await client.query(`ROLLBACK TO SAVEPOINT ${savepointName}`);
-
-      if (!isRetryableError(error) || attempt === maxRetries) {
-        const enhancedError = new Error(
-          `Batch upsert failed for "${tableName}" on batch ${batchNumber}/${batchCount}: ${error.message}`
-        );
-        enhancedError.cause = error;
-        throw enhancedError;
-      }
-
-      if (onProgress) {
-        onProgress({
-          phase: 'retry',
-          tableName,
-          batchNumber,
-          batchCount,
-          attempt,
-          maxRetries,
-          errorCode: error.code || 'UNKNOWN',
-        });
-      }
-
-      await sleep(150 * attempt);
-    }
-  }
-
-  return [];
-}
-
-async function upsertRows(client, analysis, rowBuckets, options = {}) {
-  const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
-  const maxRetries = options.maxRetries || DEFAULT_MAX_RETRIES;
-  const onProgress = options.onProgress;
-  const totalRows = Array.from(rowBuckets.values()).reduce((sum, rows) => sum + rows.length, 0);
-  const idMaps = new Map();
-  let insertedRowCount = 0;
-
-  for (const table of analysis.tables) {
-    const rawRows = rowBuckets.get(table.tableName) || [];
-
-    if (rawRows.length === 0) {
-      continue;
-    }
-
-    const rows = hydrateParentReferences(table, rawRows, idMaps);
-    const columnGroups = buildColumnGroups(rows, table);
-    const totalBatches = columnGroups.reduce((sum, group) => {
-      return sum + chunkRows(group.rows, batchSize).length;
-    }, 0);
-    const tableIdMap = buildIdMap();
-    let processedTableRows = 0;
-    let batchNumber = 0;
-
-    if (onProgress) {
-      onProgress({
-        phase: 'table-start',
-        tableName: table.tableName,
-        tableRowCount: rows.length,
-        totalRows,
-        insertedRows: insertedRowCount,
-        batchCount: totalBatches,
-      });
-    }
-
-    for (const group of columnGroups) {
-      const batches = chunkRows(group.rows, batchSize);
-
-      for (const batchRows of batches) {
-        batchNumber += 1;
-
-        const returnedRows = await runBatchWithRetry({
-          client,
-          tableName: table.tableName,
-          batchRows,
-          columns: group.columns,
-          batchNumber,
-          batchCount: totalBatches,
-          maxRetries,
-          onProgress,
-        });
-
-        returnedRows.forEach((returnedRow) => {
-          tableIdMap.set(returnedRow.source_fingerprint, returnedRow.id);
-        });
-
-        insertedRowCount += batchRows.length;
-        processedTableRows += batchRows.length;
-
-        if (onProgress) {
-          onProgress({
-            phase: 'batch-complete',
-            tableName: table.tableName,
-            batchNumber,
-            batchCount: totalBatches,
-            batchSize: batchRows.length,
-            insertedRows: insertedRowCount,
-            totalRows,
-            processedTableRows,
-            tableRowCount: rows.length,
-          });
-        }
-      }
-    }
-
-    idMaps.set(table.tableName, tableIdMap);
-  }
-
-  return insertedRowCount;
-}
-
 async function migrateDocuments({
   documents,
   collectionName,
+  sourceAdapterType = 'mongodb',
+  targetAdapterType = 'postgres',
   queryExecutor,
   batchSize = DEFAULT_BATCH_SIZE,
   maxRetries = DEFAULT_MAX_RETRIES,
   onProgress,
 }) {
-  const analysis = analyzeDocuments(documents, collectionName);
-  const rowBuckets = buildRowsFromDocuments(documents, collectionName);
+  const targetAdapter = getTargetAdapter(targetAdapterType);
+  const analysis = analyzeDocuments(documents, collectionName, {
+    sourceAdapter: sourceAdapterType,
+    targetAdapter: targetAdapterType,
+  });
+  const unifiedSchemaModel = assertValidUnifiedSchemaModel(analysis.unifiedSchemaModel);
+  const rowBuckets = buildRowsFromDocuments(documents, unifiedSchemaModel);
   const totalRows = Array.from(rowBuckets.values()).reduce((sum, rows) => sum + rows.length, 0);
 
   if (onProgress) {
@@ -612,9 +330,9 @@ async function migrateDocuments({
   }
 
   const insertedRowCount = await queryExecutor(async (client) => {
-    await createSchema(client, analysis);
-    await assertTablesReadyForIdempotentMigration(client, analysis);
-    return upsertRows(client, analysis, rowBuckets, {
+    await targetAdapter.createSchema(client, unifiedSchemaModel);
+    await targetAdapter.assertReadyForIdempotentMigration(client, unifiedSchemaModel);
+    return targetAdapter.upsertRows(client, unifiedSchemaModel, rowBuckets, {
       batchSize,
       maxRetries,
       onProgress,
@@ -623,8 +341,9 @@ async function migrateDocuments({
 
   return {
     analysis,
+    unifiedSchemaModel,
     insertedRowCount,
-    migratedTables: analysis.tables.length,
+    migratedTables: unifiedSchemaModel.entities.length,
     totalRows,
     batchSize,
     maxRetries,

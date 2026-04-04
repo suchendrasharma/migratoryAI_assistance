@@ -1,11 +1,15 @@
 {
   "source": {
+    "_note": "Source adapter plugin selector. Currently supported: mongodb",
     "type": "mongodb",
     "uri": "mongodb://127.0.0.1:27017",
     "dbName": "sample_mflix",
-    "collectionName": "users"
+    "entityName": "users",
+    "collectionName": "users",
+    "sampleLimit": 5
   },
   "target": {
+    "_note": "Target adapter plugin selector. Currently supported: postgres",
     "type": "postgres",
     "host": "127.0.0.1",
     "port": 5432,
@@ -14,10 +18,11 @@
     "database": "migratoryai"
   },
   "options": {
-    "sampleLimit": 5,
+    "_note": "CLI flags override these values. These options drive the generic core engine regardless of adapter.",
     "limit": 1000,
     "batchSize": 250,
     "retries": 3,
+    "dryRun": false,
     "validate": true
   }
 }

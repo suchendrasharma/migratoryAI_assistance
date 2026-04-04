@@ -83,9 +83,9 @@
             <li>Validate counts after migration.</li>
           </ol>
 
-          <pre><code>migratoryai pg-check
-migratoryai analyze --collection users --limit 5
-migratoryai migrate --collection users --limit 500 --batch-size 100 --validate
+          <pre><code>migratoryai target-check
+migratoryai analyze --entity users --limit 5
+migratoryai migrate --entity users --limit 500 --batch-size 100 --validate
 </code></pre>
         </section>
 
@@ -107,8 +107,8 @@ migratoryai migrate --collection users --limit 500 --batch-size 100 --validate
               <p>Compare expected row counts from source data against the SQL target.</p>
             </article>
             <article>
-              <h3>`migratoryai pg-check`</h3>
-              <p>Verify target database connectivity before running migrations.</p>
+              <h3>`migratoryai target-check`</h3>
+              <p>Verify target database connectivity before running migrations. `pg-check` remains as an alias.</p>
             </article>
           </div>
         </section>
@@ -122,6 +122,7 @@ migratoryai migrate --collection users --limit 500 --batch-size 100 --validate
     "type": "mongodb",
     "uri": "mongodb://127.0.0.1:27017",
     "dbName": "sample_mflix",
+    "entityName": "users",
     "collectionName": "users"
   },
   "target": {

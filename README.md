@@ -137,19 +137,19 @@ PGDATABASE=migratoryai
 ### 3. Check PostgreSQL
 
 ```bash
-migratoryai pg-check
+migratoryai target-check
 ```
 
-### 4. Analyze sample MongoDB data
+### 4. Analyze source data
 
 ```bash
-migratoryai analyze --collection users --limit 5
+migratoryai analyze --entity users --limit 5
 ```
 
 ### 5. Migrate with validation
 
 ```bash
-migratoryai migrate --collection users --limit 5000 --batch-size 500 --retries 3 --validate
+migratoryai migrate --entity users --limit 5000 --batch-size 500 --retries 3 --validate
 ```
 
 ### Optional: Create `migrate.config.json`
@@ -164,6 +164,7 @@ Example:
     "type": "mongodb",
     "uri": "mongodb://127.0.0.1:27017",
     "dbName": "sample_mflix",
+    "entityName": "users",
     "collectionName": "users"
   },
   "target": {
@@ -187,10 +188,10 @@ Example:
 This file uses three main sections:
 
 - `source`
-  MongoDB connection and source collection settings.
+  Source adapter, connection, and source entity settings.
 
 - `target`
-  PostgreSQL connection settings.
+  Target adapter and SQL connection settings.
 
 - `options`
   Migration defaults such as limit, batch size, retries, and validation.
@@ -206,7 +207,7 @@ This file uses three main sections:
   Source MongoDB database.
 
 - `MONGODB_COLLECTION`
-  Default collection when `--collection` is not passed.
+  Default source entity when `--entity` is not passed. `--collection` still works as a compatibility alias.
 
 - `MONGODB_SAMPLE_LIMIT`
   Default document count for `analyze`.
@@ -280,9 +281,11 @@ The package excludes frontend assets and repo-only development files from the pu
 
 ## Commands
 
-### `migratoryai pg-check`
+### `migratoryai target-check`
 
-Checks that PostgreSQL is reachable with the configured credentials.
+Checks that the configured target SQL database is reachable.
+
+`migratoryai pg-check` still works as a compatibility alias for PostgreSQL-backed setups.
 
 Supports:
 
@@ -292,12 +295,12 @@ Supports:
 ### `migratoryai analyze`
 
 ```bash
-migratoryai analyze --collection users --limit 5
+migratoryai analyze --entity users --limit 5
 ```
 
 What it does:
 
-- fetches sample MongoDB documents
+- fetches sample source records
 - prints sample JSON
 - infers relational tables
 - prints suggested SQL
@@ -311,16 +314,16 @@ Supports:
 ### `migratoryai migrate`
 
 ```bash
-migratoryai migrate --collection users --limit 1000 --batch-size 250 --retries 3 --validate
+migratoryai migrate --entity users --limit 1000 --batch-size 250 --retries 3 --validate
 ```
 
 What it does:
 
-- reads MongoDB documents
+- reads source records
 - infers relational mapping
-- creates missing PostgreSQL tables and indexes
+- creates missing target tables and indexes
 - migrates rows in batches
-- retries transient PostgreSQL failures
+- retries transient target write failures
 - optionally validates after migration
 
 Options:
@@ -328,8 +331,11 @@ Options:
 - `--config`
   Path to a migration config JSON file.
 
+- `--entity`
+  Source entity to migrate.
+
 - `--collection`
-  MongoDB collection to migrate.
+  Compatibility alias for `--entity`.
 
 - `--limit`
   Number of source documents to migrate.
@@ -346,13 +352,13 @@ Options:
 ### `migratoryai validate`
 
 ```bash
-migratoryai validate --collection users --limit 1000
+migratoryai validate --entity users --limit 1000
 ```
 
 What it does:
 
-- computes expected relational row counts from MongoDB
-- compares them against PostgreSQL target tables
+- computes expected relational row counts from source records
+- compares them against target SQL tables
 - checks fingerprint coverage and duplicates
 - tells the user whether a rerun is recommended
 
@@ -364,12 +370,12 @@ Supports:
 ## Recommended Workflow
 
 1. Configure `.env`
-2. Run `migratoryai pg-check`
-3. Run `migratoryai analyze --collection <name> --limit <n>`
-4. Run `migratoryai migrate --collection <name> --limit <n> --batch-size <n> --retries <n> --validate`
+2. Run `migratoryai target-check`
+3. Run `migratoryai analyze --entity <name> --limit <n>`
+4. Run `migratoryai migrate --entity <name> --limit <n> --batch-size <n> --retries <n> --validate`
 5. If validation recommends a rerun, run the same migrate command again
 
-Because the migration is fingerprint-based and uses PostgreSQL upserts, rerunning the same dataset does not create duplicate rows.
+Because the migration is fingerprint-based and uses target-side upserts, rerunning the same dataset does not create duplicate rows.
 
 ## Load Testing
 

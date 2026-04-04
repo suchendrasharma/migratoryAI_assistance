@@ -1,10 +1,12 @@
 const { analyzeDocuments } = require('./analyzer');
 const { buildRowsFromDocuments } = require('./migrator');
+const { assertValidUnifiedSchemaModel } = require('./unifiedSchemaModel');
+const { getTargetAdapter } = require('../plugins/registry');
 
-function buildValidationSummary(analysis, rowBuckets, targetCounts) {
-  const tableComparisons = analysis.tables.map((table) => {
-    const expectedRows = (rowBuckets.get(table.tableName) || []).length;
-    const target = targetCounts[table.tableName] || {
+function buildValidationSummary(unifiedSchemaModel, rowBuckets, targetCounts) {
+  const tableComparisons = unifiedSchemaModel.entities.map((entity) => {
+    const expectedRows = (rowBuckets.get(entity.name) || []).length;
+    const target = targetCounts[entity.name] || {
       actualRows: 0,
       distinctFingerprints: 0,
       duplicateRows: 0,
@@ -16,7 +18,7 @@ function buildValidationSummary(analysis, rowBuckets, targetCounts) {
     const fingerprintCoverage = target.fingerprintCoverage;
 
     return {
-      tableName: table.tableName,
+      tableName: entity.name,
       expectedRows,
       actualRows,
       distinctFingerprints,
@@ -38,31 +40,26 @@ function buildValidationSummary(analysis, rowBuckets, targetCounts) {
 async function validateMigration({
   documents,
   collectionName,
+  sourceAdapterType = 'mongodb',
+  targetAdapterType = 'postgres',
   queryExecutor,
 }) {
-  const analysis = analyzeDocuments(documents, collectionName);
-  const rowBuckets = buildRowsFromDocuments(documents, collectionName);
-  const tableNames = analysis.tables.map((table) => table.tableName);
+  const targetAdapter = getTargetAdapter(targetAdapterType);
+  const analysis = analyzeDocuments(documents, collectionName, {
+    sourceAdapter: sourceAdapterType,
+    targetAdapter: targetAdapterType,
+  });
+  const unifiedSchemaModel = assertValidUnifiedSchemaModel(analysis.unifiedSchemaModel);
+  const rowBuckets = buildRowsFromDocuments(documents, unifiedSchemaModel);
 
-  const targetCounts = await queryExecutor(async (client) => {
-    const counts = {};
-
-    for (const tableName of tableNames) {
-      const result = await client.query(
-        `SELECT COUNT(*)::int AS actual_rows, COUNT(DISTINCT source_fingerprint)::int AS distinct_fingerprints, (COUNT(*) - COUNT(DISTINCT source_fingerprint))::int AS duplicate_rows, COUNT(source_fingerprint)::int AS fingerprint_coverage FROM ${tableName}`
-      );
-      counts[tableName] = {
-        actualRows: result.rows[0].actual_rows,
-        distinctFingerprints: result.rows[0].distinct_fingerprints,
-        duplicateRows: result.rows[0].duplicate_rows,
-        fingerprintCoverage: result.rows[0].fingerprint_coverage,
-      };
-    }
-
-    return counts;
+  const targetCounts = await queryExecutor((client) => {
+    return targetAdapter.readEntityCounts(client, unifiedSchemaModel);
   });
 
-  return buildValidationSummary(analysis, rowBuckets, targetCounts);
+  return {
+    ...buildValidationSummary(unifiedSchemaModel, rowBuckets, targetCounts),
+    unifiedSchemaModel,
+  };
 }
 
 module.exports = {

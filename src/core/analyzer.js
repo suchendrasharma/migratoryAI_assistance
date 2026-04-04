@@ -1,3 +1,8 @@
+const {
+  assertValidUnifiedSchemaModel,
+  buildUnifiedSchemaModelFromAnalysis,
+} = require('./unifiedSchemaModel');
+
 function toSnakeCase(value) {
   return String(value)
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
@@ -389,35 +394,6 @@ function finalizeTable(table) {
   };
 }
 
-function buildCreateTableStatement(table) {
-  const columnDefinitions = table.columns.map((column) => {
-    if (column.isPrimaryKey) {
-      return `  ${column.name} ${column.inferredSqlType} PRIMARY KEY`;
-    }
-
-    const constraints = [];
-
-    if (!column.nullable) {
-      constraints.push('NOT NULL');
-    }
-
-    return `  ${column.name} ${column.inferredSqlType}${constraints.length > 0 ? ` ${constraints.join(' ')}` : ''}`;
-  });
-
-  const foreignKeys = table.columns
-    .filter((column) => column.isForeignKey && column.references)
-    .map((column) => `  FOREIGN KEY (${column.name}) REFERENCES ${column.references} ON DELETE CASCADE`);
-
-  return `CREATE TABLE ${table.tableName} (\n${columnDefinitions
-    .concat(foreignKeys)
-    .join(',\n')}\n);`;
-}
-
-function buildIndexName(tableName, columnNames, unique = false) {
-  const prefix = unique ? 'ux' : 'ix';
-  return `${prefix}_${tableName}_${columnNames.join('_')}`;
-}
-
 function buildIndexSuggestions(tables) {
   const suggestions = [];
   const seenIndexes = new Set();
@@ -441,7 +417,6 @@ function buildIndexSuggestions(tables) {
           columnNames,
           unique: false,
           reason: `Speeds up joins to ${column.references}`,
-          sql: `CREATE INDEX ${buildIndexName(table.tableName, columnNames)} ON ${table.tableName} (${columnNames.join(', ')});`,
         });
         seenIndexes.add(key);
         return;
@@ -458,7 +433,6 @@ function buildIndexSuggestions(tables) {
           reason: isReferenceLike
             ? 'Looks like a reference field carried over from the Mongo documents'
             : 'Present on every sampled row and a likely filter/sort candidate',
-          sql: `CREATE INDEX ${buildIndexName(table.tableName, columnNames)} ON ${table.tableName} (${columnNames.join(', ')});`,
         });
         seenIndexes.add(key);
       }
@@ -490,7 +464,7 @@ function sortTables(tables, rootTableName) {
   });
 }
 
-function analyzeDocuments(documents, collectionName) {
+function analyzeDocuments(documents, collectionName, adapters = {}) {
   const rootTableName = normalizeTableName(collectionName);
   const tables = new Map();
 
@@ -506,17 +480,39 @@ function analyzeDocuments(documents, collectionName) {
     Array.from(tables.values()).map(finalizeTable),
     rootTableName
   );
-  const sqlStatements = finalizedTables.map(buildCreateTableStatement);
   const indexSuggestions = buildIndexSuggestions(finalizedTables);
 
-  return {
+  const analysis = {
     rootTableName,
     tables: finalizedTables,
-    sqlStatements,
+    sqlStatements: [],
     indexSuggestions,
   };
+
+  analysis.unifiedSchemaModel = assertValidUnifiedSchemaModel(
+    buildUnifiedSchemaModelFromAnalysis(
+      analysis,
+      adapters.sourceAdapter || 'mongodb',
+      adapters.targetAdapter || 'postgres'
+    )
+  );
+
+  return analysis;
+}
+
+function analyzeRecordsToUnifiedSchemaModel(records, entityName, adapters = {}) {
+  const analysis = analyzeDocuments(records, entityName, adapters);
+
+  return assertValidUnifiedSchemaModel(
+    buildUnifiedSchemaModelFromAnalysis(
+      analysis,
+      adapters.sourceAdapter || 'mongodb',
+      adapters.targetAdapter || 'postgres'
+    )
+  );
 }
 
 module.exports = {
   analyzeDocuments,
+  analyzeRecordsToUnifiedSchemaModel,
 };

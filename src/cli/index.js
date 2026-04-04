@@ -17,20 +17,16 @@ const { analyzeDocuments } = require('../core/analyzer');
 const { buildRowsFromDocuments, migrateDocuments } = require('../core/migrator');
 const { validateMigration } = require('../core/validator');
 const {
-  fetchDocuments,
-  fetchSampleDocuments,
-  closeMongoConnection,
-} = require('../db/mongoConnector');
-const {
-  connectPostgres,
-  withPostgresTransaction,
-  closePostgresConnection,
-} = require('../db/pgConnector');
+  getSourceAdapter,
+  getTargetAdapter,
+  listSourceAdapters,
+  listTargetAdapters,
+} = require('../plugins/registry');
 
 function printRerunSafetyNote() {
   console.log(chalk.cyan('\nRerun safety:'));
   console.log('- Rows are tracked with stable source fingerprints.');
-  console.log('- PostgreSQL writes use upsert semantics on those fingerprints.');
+  console.log('- Target adapter writes use upsert semantics on those fingerprints.');
   console.log('- Re-running the same migration fills missing rows without creating duplicate entries.');
 }
 
@@ -69,15 +65,13 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
   const sourceConfig = config ? config.source : {};
   const targetConfig = config ? config.target : {};
 
-  if (config && sourceConfig.type !== 'mongodb') {
-    throw new Error(`Unsupported source type "${sourceConfig.type}" in ${loadedConfig.configPath}.`);
-  }
-
-  if (config && targetConfig.type !== 'postgres') {
-    throw new Error(`Unsupported target type "${targetConfig.type}" in ${loadedConfig.configPath}.`);
-  }
-
-  const collectionName = options.collection || configOptions.collectionName || sourceConfig.collectionName;
+  const entityName =
+    options.entity ||
+    options.collection ||
+    configOptions.entityName ||
+    configOptions.collectionName ||
+    sourceConfig.entityName ||
+    sourceConfig.collectionName;
   const limit = readPositiveIntegerOption(
     options.limit !== undefined ? options.limit : configOptions.limit,
     '--limit'
@@ -96,11 +90,17 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
   );
   const validate = options.validate === true || configOptions.validate === true;
   const dryRun = options.dryRun === true || configOptions.dryRun === true;
+  const sourceType = sourceConfig.type || 'mongodb';
+  const targetType = targetConfig.type || 'postgres';
+  const sourceAdapter = requirements.mongo ? getSourceAdapter(sourceType) : null;
+  const targetAdapter = (requirements.postgres === true || (requirements.postgres === 'if-not-dry-run' && !dryRun))
+    ? getTargetAdapter(targetType)
+    : null;
 
   const mongoOverrides = {
     uri: sourceConfig.uri,
     dbName: sourceConfig.dbName,
-    collectionName,
+    collectionName: entityName,
     sampleLimit:
       sourceConfig.sampleLimit !== undefined ? sourceConfig.sampleLimit : configOptions.sampleLimit,
   };
@@ -122,7 +122,8 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
         ? mergePostgresConfig(removeUndefinedValues(postgresOverrides))
         : getPostgresConfig())
       : null,
-    collectionName,
+    collectionName: entityName,
+    entityName,
     limit,
     sampleLimit,
     batchSize,
@@ -131,10 +132,14 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
     dryRun,
     loadedConfig,
     commandName,
+    sourceType,
+    targetType,
+    sourceAdapter,
+    targetAdapter,
   };
 
-  if (!config) {
-    runtimeConfig.mongoConfig.collectionName = collectionName || runtimeConfig.mongoConfig.collectionName;
+  if (!config && runtimeConfig.mongoConfig) {
+    runtimeConfig.mongoConfig.collectionName = entityName || runtimeConfig.mongoConfig.collectionName;
   }
 
   return runtimeConfig;
@@ -156,7 +161,7 @@ function printConfigUsageInfo(loadedConfig, commandName) {
   );
 }
 
-function printFieldAnalysis(analysis) {
+function printFieldAnalysis(analysis, targetAdapter = null) {
   console.log(chalk.cyan('\nDetected SQL mapping:'));
 
   analysis.tables.forEach((table) => {
@@ -189,15 +194,22 @@ function printFieldAnalysis(analysis) {
     });
   });
 
+  const schemaStatements = targetAdapter && analysis.unifiedSchemaModel
+    ? targetAdapter.renderSchemaStatements(analysis.unifiedSchemaModel)
+    : analysis.sqlStatements;
+  const indexSuggestions = targetAdapter && analysis.unifiedSchemaModel
+    ? targetAdapter.renderIndexSuggestions(analysis.unifiedSchemaModel)
+    : analysis.indexSuggestions;
+
   console.log(chalk.cyan('\nSuggested SQL:'));
-  analysis.sqlStatements.forEach((statement) => {
+  schemaStatements.forEach((statement) => {
     console.log(statement);
   });
 
-  if (analysis.indexSuggestions.length > 0) {
+  if (indexSuggestions.length > 0) {
     console.log(chalk.cyan('\nSuggested indexes:'));
 
-    analysis.indexSuggestions.forEach((indexSuggestion) => {
+    indexSuggestions.forEach((indexSuggestion) => {
       console.log(
         `- ${indexSuggestion.tableName}(${indexSuggestion.columnNames.join(', ')}): ${indexSuggestion.reason}`
       );
@@ -269,68 +281,82 @@ function printValidationGuidance(validationResult) {
 }
 
 async function runAnalyzeCommand(options) {
-  const spinner = ora('Connecting to MongoDB...').start();
+  let sourceAdapter = null;
+  const spinner = ora('Connecting to source adapter...').start();
 
   try {
     const runtimeConfig = resolveRuntimeConfig(options, 'analyze', { mongo: true });
+    sourceAdapter = runtimeConfig.sourceAdapter;
+    const targetAdapter = getTargetAdapter(runtimeConfig.targetType);
     const config = runtimeConfig.mongoConfig;
     const limit = runtimeConfig.sampleLimit || config.sampleLimit;
 
-    spinner.text = 'Fetching sample documents...';
+    spinner.text = `Fetching sample records from ${runtimeConfig.sourceType}...`;
 
-    const result = await fetchSampleDocuments(config, {
+    const result = await sourceAdapter.fetchSampleRecords(config, {
       collectionName: runtimeConfig.collectionName,
       limit,
     });
 
     spinner.succeed(
-      `Fetched ${result.documents.length} sample document(s) from "${result.collectionName}".`
+      `Fetched ${result.records.length} sample record(s) from "${result.sourceEntityName}".`
     );
 
-    if (result.documents.length === 0) {
-      console.log(chalk.yellow('The collection is empty.'));
+    if (result.records.length === 0) {
+      console.log(chalk.yellow('The source entity is empty.'));
       return;
     }
 
     console.log(chalk.cyan('\nSample data:'));
-    console.log(JSON.stringify(result.documents, null, 2));
+    console.log(JSON.stringify(result.records, null, 2));
 
-    const analysis = analyzeDocuments(result.documents, result.collectionName);
-    printFieldAnalysis(analysis);
+    const analysis = analyzeDocuments(result.records, result.sourceEntityName, {
+      sourceAdapter: runtimeConfig.sourceType,
+      targetAdapter: runtimeConfig.targetType,
+    });
+    printFieldAnalysis(analysis, targetAdapter);
     if (options.explain) {
       printExplainMode(
-        explainMigrationAnalysis(result.documents, analysis, result.collectionName)
+        explainMigrationAnalysis(result.records, analysis, result.sourceEntityName)
       );
     }
     printConfigUsageInfo(runtimeConfig.loadedConfig, 'analyze');
   } catch (error) {
-    spinner.fail('Unable to analyze MongoDB sample data.');
+    spinner.fail('Unable to analyze source sample data.');
     console.error(chalk.red(error.message));
     process.exitCode = 1;
   } finally {
-    await closeMongoConnection();
+    if (sourceAdapter) {
+      await sourceAdapter.close();
+    }
   }
 }
 
 async function runPostgresCheckCommand(options) {
-  const spinner = ora('Connecting to PostgreSQL...').start();
+  let targetAdapter = null;
+  const spinner = ora('Connecting to target adapter...').start();
 
   try {
-    const runtimeConfig = resolveRuntimeConfig(options, 'pg-check', { postgres: true });
+    const runtimeConfig = resolveRuntimeConfig(options, 'target-check', { postgres: true });
+    targetAdapter = runtimeConfig.targetAdapter;
     const postgresConfig = runtimeConfig.postgresConfig;
-    await connectPostgres(postgresConfig);
-    spinner.succeed('PostgreSQL connection successful.');
-    printConfigUsageInfo(runtimeConfig.loadedConfig, 'pg-check');
+    await targetAdapter.checkConnection(postgresConfig);
+    spinner.succeed(`${runtimeConfig.targetType} connection successful.`);
+    printConfigUsageInfo(runtimeConfig.loadedConfig, 'target-check');
   } catch (error) {
-    spinner.fail('Unable to connect to PostgreSQL.');
+    spinner.fail('Unable to connect to target adapter.');
     console.error(chalk.red(error.message));
     process.exitCode = 1;
   } finally {
-    await closePostgresConnection();
+    if (targetAdapter) {
+      await targetAdapter.close();
+    }
   }
 }
 
 async function runMigrateCommand(options) {
+  let sourceAdapter = null;
+  let targetAdapter = null;
   const spinner = ora('Preparing migration...').start();
 
   try {
@@ -338,6 +364,8 @@ async function runMigrateCommand(options) {
       mongo: true,
       postgres: 'if-not-dry-run',
     });
+    sourceAdapter = runtimeConfig.sourceAdapter;
+    targetAdapter = runtimeConfig.targetAdapter;
     const mongoConfig = runtimeConfig.mongoConfig;
     const postgresConfig = runtimeConfig.postgresConfig;
     const limit = runtimeConfig.limit;
@@ -345,26 +373,30 @@ async function runMigrateCommand(options) {
     const maxRetries = runtimeConfig.retries || 3;
     const dryRun = runtimeConfig.dryRun;
 
-    spinner.text = 'Fetching MongoDB documents...';
+    spinner.text = `Fetching records from ${runtimeConfig.sourceType}...`;
 
-    const result = await fetchDocuments(mongoConfig, {
+    const result = await sourceAdapter.fetchRecords(mongoConfig, {
       collectionName: runtimeConfig.collectionName,
       limit,
     });
 
-    if (result.documents.length === 0) {
-      spinner.warn(`No documents found in "${result.collectionName}".`);
+    if (result.records.length === 0) {
+      spinner.warn(`No records found in "${result.sourceEntityName}".`);
       return;
     }
 
     if (dryRun) {
-      const analysis = analyzeDocuments(result.documents, result.collectionName);
-      const rowBuckets = buildRowsFromDocuments(result.documents, result.collectionName);
+      const previewTargetAdapter = getTargetAdapter(runtimeConfig.targetType);
+      const analysis = analyzeDocuments(result.records, result.sourceEntityName, {
+        sourceAdapter: runtimeConfig.sourceType,
+        targetAdapter: runtimeConfig.targetType,
+      });
+      const rowBuckets = buildRowsFromDocuments(result.records, analysis.unifiedSchemaModel);
 
       spinner.succeed(
-        `Dry run complete for "${result.collectionName}". SQL preview generated with no database writes.`
+        `Dry run complete for "${result.sourceEntityName}". SQL preview generated with no database writes.`
       );
-      printFieldAnalysis(analysis);
+      printFieldAnalysis(analysis, previewTargetAdapter);
       printDryRunPlan(analysis, rowBuckets);
       printConfigUsageInfo(runtimeConfig.loadedConfig, 'migrate');
 
@@ -376,16 +408,18 @@ async function runMigrateCommand(options) {
     }
 
     spinner.info(
-      `Starting idempotent migration for "${result.collectionName}". Safe reruns are enabled through source fingerprints and PostgreSQL upserts.`
+      `Starting idempotent migration for "${result.sourceEntityName}" using ${runtimeConfig.sourceType} -> ${runtimeConfig.targetType}. Safe reruns are enabled through source fingerprints and target upserts.`
     );
-    spinner.start('Migrating documents into PostgreSQL...');
+    spinner.start(`Migrating records into ${runtimeConfig.targetType}...`);
 
-    spinner.text = 'Migrating documents into PostgreSQL...';
+    spinner.text = `Migrating records into ${runtimeConfig.targetType}...`;
 
     const migrationResult = await migrateDocuments({
-      documents: result.documents,
-      collectionName: result.collectionName,
-      queryExecutor: (callback) => withPostgresTransaction(postgresConfig, callback, {
+      documents: result.records,
+      collectionName: result.sourceEntityName,
+      sourceAdapterType: runtimeConfig.sourceType,
+      targetAdapterType: runtimeConfig.targetType,
+      queryExecutor: (callback) => targetAdapter.runInTransaction(postgresConfig, callback, {
         isolationLevel: 'SERIALIZABLE',
       }),
       batchSize,
@@ -416,14 +450,16 @@ async function runMigrateCommand(options) {
       `Migrated ${migrationResult.insertedRowCount} row(s) across ${migrationResult.migratedTables} table(s) with batch size ${migrationResult.batchSize}.`
     );
 
-    printFieldAnalysis(migrationResult.analysis);
+    printFieldAnalysis(migrationResult.analysis, targetAdapter);
     printConfigUsageInfo(runtimeConfig.loadedConfig, 'migrate');
 
     if (runtimeConfig.validate) {
       const validationResult = await validateMigration({
-        documents: result.documents,
-        collectionName: result.collectionName,
-        queryExecutor: (callback) => withPostgresTransaction(postgresConfig, callback, {
+        documents: result.records,
+        collectionName: result.sourceEntityName,
+        sourceAdapterType: runtimeConfig.sourceType,
+        targetAdapterType: runtimeConfig.targetType,
+        queryExecutor: (callback) => targetAdapter.runInTransaction(postgresConfig, callback, {
           isolationLevel: 'REPEATABLE READ',
           readOnly: true,
         }),
@@ -441,12 +477,19 @@ async function runMigrateCommand(options) {
     console.error(chalk.red(error.message));
     process.exitCode = 1;
   } finally {
-    await closeMongoConnection();
-    await closePostgresConnection();
+    if (sourceAdapter) {
+      await sourceAdapter.close();
+    }
+
+    if (targetAdapter) {
+      await targetAdapter.close();
+    }
   }
 }
 
 async function runValidateCommand(options) {
+  let sourceAdapter = null;
+  let targetAdapter = null;
   const spinner = ora('Validating migrated data...').start();
 
   try {
@@ -454,33 +497,37 @@ async function runValidateCommand(options) {
       mongo: true,
       postgres: true,
     });
+    sourceAdapter = runtimeConfig.sourceAdapter;
+    targetAdapter = runtimeConfig.targetAdapter;
     const mongoConfig = runtimeConfig.mongoConfig;
     const postgresConfig = runtimeConfig.postgresConfig;
     const limit = runtimeConfig.limit;
 
-    const result = await fetchDocuments(mongoConfig, {
+    const result = await sourceAdapter.fetchRecords(mongoConfig, {
       collectionName: runtimeConfig.collectionName,
       limit,
     });
 
-    if (result.documents.length === 0) {
-      spinner.warn(`No documents found in "${result.collectionName}".`);
+    if (result.records.length === 0) {
+      spinner.warn(`No records found in "${result.sourceEntityName}".`);
       return;
     }
 
     const validationResult = await validateMigration({
-      documents: result.documents,
-      collectionName: result.collectionName,
-      queryExecutor: (callback) => withPostgresTransaction(postgresConfig, callback, {
+      documents: result.records,
+      collectionName: result.sourceEntityName,
+      sourceAdapterType: runtimeConfig.sourceType,
+      targetAdapterType: runtimeConfig.targetType,
+      queryExecutor: (callback) => targetAdapter.runInTransaction(postgresConfig, callback, {
         isolationLevel: 'REPEATABLE READ',
         readOnly: true,
       }),
     });
 
     if (validationResult.matches) {
-      spinner.succeed('Validation passed between MongoDB and PostgreSQL.');
+      spinner.succeed(`Validation passed between ${runtimeConfig.sourceType} and ${runtimeConfig.targetType}.`);
     } else {
-      spinner.fail('Validation found mismatches between MongoDB and PostgreSQL.');
+      spinner.fail(`Validation found mismatches between ${runtimeConfig.sourceType} and ${runtimeConfig.targetType}.`);
       process.exitCode = 1;
     }
 
@@ -492,8 +539,13 @@ async function runValidateCommand(options) {
     console.error(chalk.red(error.message));
     process.exitCode = 1;
   } finally {
-    await closeMongoConnection();
-    await closePostgresConnection();
+    if (sourceAdapter) {
+      await sourceAdapter.close();
+    }
+
+    if (targetAdapter) {
+      await targetAdapter.close();
+    }
   }
 }
 
@@ -514,37 +566,41 @@ function createProgram() {
 
   program
     .command('analyze')
-    .description('Analyze MongoDB and print sample documents')
+    .description(`Analyze source records and infer a relational model. Source adapters: ${listSourceAdapters().join(', ')}`)
     .option('--config <path>', 'Path to migration config JSON file')
-    .option('-c, --collection <name>', 'MongoDB collection name')
-    .option('-l, --limit <number>', 'Number of sample documents to fetch')
+    .option('-e, --entity <name>', 'Source entity name')
+    .option('-c, --collection <name>', 'Alias for --entity')
+    .option('-l, --limit <number>', 'Number of sample records to fetch')
     .option('--explain', 'Explain why the relational mapping was inferred this way')
     .action(runAnalyzeCommand);
 
   program
-    .command('pg-check')
-    .description('Test PostgreSQL connectivity')
+    .command('target-check')
+    .alias('pg-check')
+    .description(`Test target connectivity. Target adapters: ${listTargetAdapters().join(', ')}`)
     .option('--config <path>', 'Path to migration config JSON file')
     .action(runPostgresCheckCommand);
 
   program
     .command('migrate')
-    .description('Migrate MongoDB documents into PostgreSQL')
+    .description(`Migrate source records into the target adapter. Source: ${listSourceAdapters().join(', ')} | Target: ${listTargetAdapters().join(', ')}`)
     .option('--config <path>', 'Path to migration config JSON file')
-    .option('-c, --collection <name>', 'MongoDB collection name')
-    .option('-l, --limit <number>', 'Number of documents to migrate')
+    .option('-e, --entity <name>', 'Source entity name')
+    .option('-c, --collection <name>', 'Alias for --entity')
+    .option('-l, --limit <number>', 'Number of source records to migrate')
     .option('-b, --batch-size <number>', 'Number of rows to insert per batch')
-    .option('-r, --retries <number>', 'Retry attempts for transient PostgreSQL batch failures')
-    .option('--dry-run', 'Preview SQL and planned row counts without writing to PostgreSQL')
-    .option('--validate', 'Validate PostgreSQL row counts against the MongoDB source after migration')
+    .option('-r, --retries <number>', 'Retry attempts for transient target batch failures')
+    .option('--dry-run', 'Preview target DDL and planned row counts without writing data')
+    .option('--validate', 'Validate target row counts against the source after migration')
     .action(runMigrateCommand);
 
   program
     .command('validate')
-    .description('Validate migrated PostgreSQL row counts against MongoDB source data')
+    .description('Validate migrated target row counts against source data')
     .option('--config <path>', 'Path to migration config JSON file')
-    .option('-c, --collection <name>', 'MongoDB collection name')
-    .option('-l, --limit <number>', 'Number of MongoDB documents to validate')
+    .option('-e, --entity <name>', 'Source entity name')
+    .option('-c, --collection <name>', 'Alias for --entity')
+    .option('-l, --limit <number>', 'Number of source records to validate')
     .action(runValidateCommand);
 
   return program;

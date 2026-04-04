@@ -49,6 +49,7 @@ function normalizeSourceConfig(source) {
     type: source.type || 'mongodb',
     uri: source.uri,
     dbName: source.dbName || source.database,
+    entityName: source.entityName || source.entity || source.collectionName || source.collection,
     collectionName: source.collectionName || source.collection,
     sampleLimit: source.sampleLimit,
   };
@@ -68,6 +69,7 @@ function normalizeTargetConfig(target) {
 
 function normalizeOptionsConfig(options) {
   return {
+    entityName: options.entityName || options.entity || options.collectionName || options.collection,
     collectionName: options.collectionName || options.collection,
     limit: options.limit,
     batchSize: options.batchSize,
