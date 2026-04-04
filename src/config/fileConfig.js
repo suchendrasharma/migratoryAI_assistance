@@ -46,7 +46,7 @@ function normalizeMigrationConfig(config) {
 
 function normalizeSourceConfig(source) {
   return {
-    type: source.type || 'mongodb',
+    type: source.type,
     uri: source.uri,
     dbName: source.dbName || source.database,
     entityName: source.entityName || source.entity || source.collectionName || source.collection,
@@ -57,7 +57,7 @@ function normalizeSourceConfig(source) {
 
 function normalizeTargetConfig(target) {
   return {
-    type: target.type || 'postgres',
+    type: target.type,
     connectionString: target.connectionString || target.url,
     host: target.host,
     port: target.port,

@@ -1,8 +1,13 @@
 const { mongoDbSourceAdapter } = require('./source/mongodbAdapter');
+const { couchDbSourceAdapter } = require('./source/couchdbAdapter');
 const { postgresTargetAdapter } = require('./target/postgresAdapter');
 
 const sourceAdapters = new Map();
 const targetAdapters = new Map();
+const sourceAdapterAliases = new Map([
+  ['mongo', 'mongodb'],
+  ['couch', 'couchdb'],
+]);
 
 function registerSourceAdapter(adapter) {
   if (!adapter || !adapter.id || adapter.kind !== 'source') {
@@ -21,13 +26,18 @@ function registerTargetAdapter(adapter) {
 }
 
 function getSourceAdapter(adapterId = 'mongodb') {
-  const adapter = sourceAdapters.get(adapterId);
+  const normalizedAdapterId = normalizeSourceAdapterId(adapterId);
+  const adapter = sourceAdapters.get(normalizedAdapterId);
 
   if (!adapter) {
     throw new Error(`Unsupported source adapter "${adapterId}".`);
   }
 
   return adapter;
+}
+
+function normalizeSourceAdapterId(adapterId = 'mongodb') {
+  return sourceAdapterAliases.get(adapterId) || adapterId;
 }
 
 function getTargetAdapter(adapterId = 'postgres') {
@@ -49,6 +59,7 @@ function listTargetAdapters() {
 }
 
 registerSourceAdapter(mongoDbSourceAdapter);
+registerSourceAdapter(couchDbSourceAdapter);
 registerTargetAdapter(postgresTargetAdapter);
 
 module.exports = {
@@ -56,6 +67,7 @@ module.exports = {
   getTargetAdapter,
   listSourceAdapters,
   listTargetAdapters,
+  normalizeSourceAdapterId,
   registerSourceAdapter,
   registerTargetAdapter,
 };

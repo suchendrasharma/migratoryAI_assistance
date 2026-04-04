@@ -1,6 +1,6 @@
 {
   "source": {
-    "_note": "Source adapter plugin selector. Currently supported: mongodb",
+    "_note": "Source adapter plugin selector. Currently supported: mongodb, couchdb",
     "type": "mongodb",
     "uri": "mongodb://127.0.0.1:27017",
     "dbName": "sample_mflix",

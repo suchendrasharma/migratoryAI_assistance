@@ -3,10 +3,12 @@ const chalk = require('chalk');
 const ora = require('ora').default;
 
 const {
-  getMongoConfig,
   getPostgresConfig,
-  mergeMongoConfig,
+  getSourceAdapterType,
+  getSourceConfig,
+  getTargetAdapterType,
   mergePostgresConfig,
+  mergeSourceConfig,
 } = require('../config/env');
 const {
   DEFAULT_CONFIG_FILENAME,
@@ -21,6 +23,7 @@ const {
   getTargetAdapter,
   listSourceAdapters,
   listTargetAdapters,
+  normalizeSourceAdapterId,
 } = require('../plugins/registry');
 
 function printRerunSafetyNote() {
@@ -90,14 +93,20 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
   );
   const validate = options.validate === true || configOptions.validate === true;
   const dryRun = options.dryRun === true || configOptions.dryRun === true;
-  const sourceType = sourceConfig.type || 'mongodb';
-  const targetType = targetConfig.type || 'postgres';
-  const sourceAdapter = requirements.mongo ? getSourceAdapter(sourceType) : null;
-  const targetAdapter = (requirements.postgres === true || (requirements.postgres === 'if-not-dry-run' && !dryRun))
+  const sourceType = normalizeSourceAdapterId(
+    options.source || sourceConfig.type || getSourceAdapterType()
+  );
+  const targetType = targetConfig.type || getTargetAdapterType();
+  const needsSource = Boolean(requirements.source || requirements.mongo);
+  const needsTarget = requirements.target === true ||
+    requirements.postgres === true ||
+    ((requirements.target === 'if-not-dry-run' || requirements.postgres === 'if-not-dry-run') && !dryRun);
+  const sourceAdapter = needsSource ? getSourceAdapter(sourceType) : null;
+  const targetAdapter = needsTarget
     ? getTargetAdapter(targetType)
     : null;
 
-  const mongoOverrides = {
+  const sourceOverrides = {
     uri: sourceConfig.uri,
     dbName: sourceConfig.dbName,
     collectionName: entityName,
@@ -114,10 +123,12 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
   };
 
   const runtimeConfig = {
-    mongoConfig: requirements.mongo
-      ? (config ? mergeMongoConfig(removeUndefinedValues(mongoOverrides)) : getMongoConfig())
+    sourceConfig: needsSource
+      ? (config
+        ? mergeSourceConfig(sourceType, removeUndefinedValues(sourceOverrides))
+        : getSourceConfig(sourceType))
       : null,
-    postgresConfig: (requirements.postgres === true || (requirements.postgres === 'if-not-dry-run' && !dryRun))
+    targetConfig: needsTarget
       ? (config
         ? mergePostgresConfig(removeUndefinedValues(postgresOverrides))
         : getPostgresConfig())
@@ -138,8 +149,11 @@ function resolveRuntimeConfig(options, commandName, requirements = {}) {
     targetAdapter,
   };
 
-  if (!config && runtimeConfig.mongoConfig) {
-    runtimeConfig.mongoConfig.collectionName = entityName || runtimeConfig.mongoConfig.collectionName;
+  runtimeConfig.mongoConfig = runtimeConfig.sourceConfig;
+  runtimeConfig.postgresConfig = runtimeConfig.targetConfig;
+
+  if (!config && runtimeConfig.sourceConfig) {
+    runtimeConfig.sourceConfig.collectionName = entityName || runtimeConfig.sourceConfig.collectionName;
   }
 
   return runtimeConfig;
@@ -285,10 +299,10 @@ async function runAnalyzeCommand(options) {
   const spinner = ora('Connecting to source adapter...').start();
 
   try {
-    const runtimeConfig = resolveRuntimeConfig(options, 'analyze', { mongo: true });
+  const runtimeConfig = resolveRuntimeConfig(options, 'analyze', { source: true });
     sourceAdapter = runtimeConfig.sourceAdapter;
     const targetAdapter = getTargetAdapter(runtimeConfig.targetType);
-    const config = runtimeConfig.mongoConfig;
+    const config = runtimeConfig.sourceConfig;
     const limit = runtimeConfig.sampleLimit || config.sampleLimit;
 
     spinner.text = `Fetching sample records from ${runtimeConfig.sourceType}...`;
@@ -337,10 +351,10 @@ async function runPostgresCheckCommand(options) {
   const spinner = ora('Connecting to target adapter...').start();
 
   try {
-    const runtimeConfig = resolveRuntimeConfig(options, 'target-check', { postgres: true });
+    const runtimeConfig = resolveRuntimeConfig(options, 'target-check', { target: true });
     targetAdapter = runtimeConfig.targetAdapter;
-    const postgresConfig = runtimeConfig.postgresConfig;
-    await targetAdapter.checkConnection(postgresConfig);
+    const targetConfig = runtimeConfig.targetConfig;
+    await targetAdapter.checkConnection(targetConfig);
     spinner.succeed(`${runtimeConfig.targetType} connection successful.`);
     printConfigUsageInfo(runtimeConfig.loadedConfig, 'target-check');
   } catch (error) {
@@ -361,13 +375,13 @@ async function runMigrateCommand(options) {
 
   try {
     const runtimeConfig = resolveRuntimeConfig(options, 'migrate', {
-      mongo: true,
-      postgres: 'if-not-dry-run',
+      source: true,
+      target: 'if-not-dry-run',
     });
     sourceAdapter = runtimeConfig.sourceAdapter;
     targetAdapter = runtimeConfig.targetAdapter;
-    const mongoConfig = runtimeConfig.mongoConfig;
-    const postgresConfig = runtimeConfig.postgresConfig;
+    const sourceConfig = runtimeConfig.sourceConfig;
+    const targetConfig = runtimeConfig.targetConfig;
     const limit = runtimeConfig.limit;
     const batchSize = runtimeConfig.batchSize || 250;
     const maxRetries = runtimeConfig.retries || 3;
@@ -375,7 +389,7 @@ async function runMigrateCommand(options) {
 
     spinner.text = `Fetching records from ${runtimeConfig.sourceType}...`;
 
-    const result = await sourceAdapter.fetchRecords(mongoConfig, {
+    const result = await sourceAdapter.fetchRecords(sourceConfig, {
       collectionName: runtimeConfig.collectionName,
       limit,
     });
@@ -419,7 +433,7 @@ async function runMigrateCommand(options) {
       collectionName: result.sourceEntityName,
       sourceAdapterType: runtimeConfig.sourceType,
       targetAdapterType: runtimeConfig.targetType,
-      queryExecutor: (callback) => targetAdapter.runInTransaction(postgresConfig, callback, {
+      queryExecutor: (callback) => targetAdapter.runInTransaction(targetConfig, callback, {
         isolationLevel: 'SERIALIZABLE',
       }),
       batchSize,
@@ -459,7 +473,7 @@ async function runMigrateCommand(options) {
         collectionName: result.sourceEntityName,
         sourceAdapterType: runtimeConfig.sourceType,
         targetAdapterType: runtimeConfig.targetType,
-        queryExecutor: (callback) => targetAdapter.runInTransaction(postgresConfig, callback, {
+        queryExecutor: (callback) => targetAdapter.runInTransaction(targetConfig, callback, {
           isolationLevel: 'REPEATABLE READ',
           readOnly: true,
         }),
@@ -494,16 +508,16 @@ async function runValidateCommand(options) {
 
   try {
     const runtimeConfig = resolveRuntimeConfig(options, 'validate', {
-      mongo: true,
-      postgres: true,
+      source: true,
+      target: true,
     });
     sourceAdapter = runtimeConfig.sourceAdapter;
     targetAdapter = runtimeConfig.targetAdapter;
-    const mongoConfig = runtimeConfig.mongoConfig;
-    const postgresConfig = runtimeConfig.postgresConfig;
+    const sourceConfig = runtimeConfig.sourceConfig;
+    const targetConfig = runtimeConfig.targetConfig;
     const limit = runtimeConfig.limit;
 
-    const result = await sourceAdapter.fetchRecords(mongoConfig, {
+    const result = await sourceAdapter.fetchRecords(sourceConfig, {
       collectionName: runtimeConfig.collectionName,
       limit,
     });
@@ -518,7 +532,7 @@ async function runValidateCommand(options) {
       collectionName: result.sourceEntityName,
       sourceAdapterType: runtimeConfig.sourceType,
       targetAdapterType: runtimeConfig.targetType,
-      queryExecutor: (callback) => targetAdapter.runInTransaction(postgresConfig, callback, {
+      queryExecutor: (callback) => targetAdapter.runInTransaction(targetConfig, callback, {
         isolationLevel: 'REPEATABLE READ',
         readOnly: true,
       }),
@@ -568,6 +582,7 @@ function createProgram() {
     .command('analyze')
     .description(`Analyze source records and infer a relational model. Source adapters: ${listSourceAdapters().join(', ')}`)
     .option('--config <path>', 'Path to migration config JSON file')
+    .option('--source <adapter>', 'Override source adapter from config/env (mongodb, mongo, couchdb, couch)')
     .option('-e, --entity <name>', 'Source entity name')
     .option('-c, --collection <name>', 'Alias for --entity')
     .option('-l, --limit <number>', 'Number of sample records to fetch')
@@ -585,6 +600,7 @@ function createProgram() {
     .command('migrate')
     .description(`Migrate source records into the target adapter. Source: ${listSourceAdapters().join(', ')} | Target: ${listTargetAdapters().join(', ')}`)
     .option('--config <path>', 'Path to migration config JSON file')
+    .option('--source <adapter>', 'Override source adapter from config/env (mongodb, mongo, couchdb, couch)')
     .option('-e, --entity <name>', 'Source entity name')
     .option('-c, --collection <name>', 'Alias for --entity')
     .option('-l, --limit <number>', 'Number of source records to migrate')
@@ -598,6 +614,7 @@ function createProgram() {
     .command('validate')
     .description('Validate migrated target row counts against source data')
     .option('--config <path>', 'Path to migration config JSON file')
+    .option('--source <adapter>', 'Override source adapter from config/env (mongodb, mongo, couchdb, couch)')
     .option('-e, --entity <name>', 'Source entity name')
     .option('-c, --collection <name>', 'Alias for --entity')
     .option('-l, --limit <number>', 'Number of source records to validate')

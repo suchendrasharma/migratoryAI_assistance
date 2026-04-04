@@ -53,6 +53,15 @@ function getMongoConfig() {
   };
 }
 
+function getCouchConfig() {
+  return {
+    uri: readRequiredEnv('COUCHDB_URI'),
+    dbName: readRequiredEnv('COUCHDB_DB'),
+    collectionName: process.env.COUCHDB_ENTITY || process.env.COUCHDB_DB || '',
+    sampleLimit: readPositiveInteger(process.env.COUCHDB_SAMPLE_LIMIT, 5),
+  };
+}
+
 function getPostgresConfig() {
   const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL || '';
   const database = process.env.PGDATABASE || '';
@@ -86,6 +95,51 @@ function mergeMongoConfig(overrides = {}) {
   };
 }
 
+function mergeCouchConfig(overrides = {}) {
+  const baseConfig = getCouchConfig();
+
+  return {
+    ...baseConfig,
+    ...overrides,
+    collectionName:
+      overrides.collectionName !== undefined ? overrides.collectionName : baseConfig.collectionName,
+    sampleLimit:
+      overrides.sampleLimit !== undefined ? overrides.sampleLimit : baseConfig.sampleLimit,
+  };
+}
+
+function getSourceAdapterType() {
+  return process.env.SOURCE_ADAPTER || 'mongodb';
+}
+
+function getSourceConfig(sourceType = getSourceAdapterType()) {
+  if (sourceType === 'mongodb') {
+    return getMongoConfig();
+  }
+
+  if (sourceType === 'couchdb') {
+    return getCouchConfig();
+  }
+
+  throw new Error(`Unsupported source adapter "${sourceType}".`);
+}
+
+function mergeSourceConfig(sourceType = getSourceAdapterType(), overrides = {}) {
+  if (sourceType === 'mongodb') {
+    return mergeMongoConfig(overrides);
+  }
+
+  if (sourceType === 'couchdb') {
+    return mergeCouchConfig(overrides);
+  }
+
+  throw new Error(`Unsupported source adapter "${sourceType}".`);
+}
+
+function getTargetAdapterType() {
+  return process.env.TARGET_ADAPTER || 'postgres';
+}
+
 function mergePostgresConfig(overrides = {}) {
   const baseConfig = getPostgresConfig();
 
@@ -96,8 +150,14 @@ function mergePostgresConfig(overrides = {}) {
 }
 
 module.exports = {
+  getCouchConfig,
   getMongoConfig,
   getPostgresConfig,
+  getSourceAdapterType,
+  getSourceConfig,
+  getTargetAdapterType,
+  mergeCouchConfig,
   mergeMongoConfig,
   mergePostgresConfig,
+  mergeSourceConfig,
 };
