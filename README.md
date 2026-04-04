@@ -9,6 +9,7 @@ It is designed for nested NoSQL documents, relational inference, rerun-safe migr
 - infer SQL tables from MongoDB documents
 - extract nested arrays into child tables with foreign keys
 - generate suggested SQL and index recommendations
+- choose a source adapter with `--source` (`mongodb`, `mongo`, `couchdb`, `couch`)
 - migrate MongoDB data into PostgreSQL in batches
 - retry transient PostgreSQL failures
 - validate source-to-target row counts
@@ -17,7 +18,7 @@ It is designed for nested NoSQL documents, relational inference, rerun-safe migr
 
 ## Example
 
-MongoDB document:
+NoSQL document:
 
 ```json
 {
@@ -49,13 +50,13 @@ CREATE TABLE orders (
 
 ## Why This Exists
 
-MongoDB documents often contain nested objects and arrays that do not map directly to relational tables.
+NoSQL documents often contain nested objects and arrays that do not map directly to relational tables.
 MigratoryAI helps bridge that gap by:
 
-- analyzing real MongoDB sample documents
+- analyzing real source sample documents
 - inferring a relational schema
-- migrating documents into PostgreSQL
-- validating that migrated SQL rows match the MongoDB-derived expectation
+- migrating documents into SQL
+- validating that migrated SQL rows match the source-derived expectation
 
 ## Safety First
 
@@ -120,13 +121,33 @@ npm install
 
 ### 2. Create `.env`
 
-Use `.env.example` as your base:
+Use `.env.example` as your base.
+
+MongoDB source example:
 
 ```env
+SOURCE_ADAPTER=mongodb
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DB=sample_mflix
 MONGODB_COLLECTION=movies
 MONGODB_SAMPLE_LIMIT=5
+TARGET_ADAPTER=postgres
+PGHOST=127.0.0.1
+PGPORT=5432
+PGUSER=postgres
+PGPASSWORD=postgres
+PGDATABASE=migratoryai
+```
+
+CouchDB source example:
+
+```env
+SOURCE_ADAPTER=couchdb
+COUCHDB_URI=http://127.0.0.1:5984
+COUCHDB_DB=users
+COUCHDB_ENTITY=users
+COUCHDB_SAMPLE_LIMIT=5
+TARGET_ADAPTER=postgres
 PGHOST=127.0.0.1
 PGPORT=5432
 PGUSER=postgres
@@ -144,6 +165,7 @@ migratoryai target-check
 
 ```bash
 migratoryai analyze --entity users --limit 5
+migratoryai analyze --source=couch --entity users --limit 5
 ```
 
 ### 5. Migrate with validation
@@ -188,7 +210,7 @@ Example:
 This file uses three main sections:
 
 - `source`
-  Source adapter, connection, and source entity settings.
+  Source adapter, connection, and source entity settings. Supported values today: `mongodb`, `couchdb`.
 
 - `target`
   Target adapter and SQL connection settings.
@@ -197,6 +219,14 @@ This file uses three main sections:
   Migration defaults such as limit, batch size, retries, and validation.
 
 ## Environment Variables
+
+### Adapter selection
+
+- `SOURCE_ADAPTER`
+  Source plugin selector. Supported values: `mongodb`, `couchdb`.
+
+- `TARGET_ADAPTER`
+  Target plugin selector. Supported value today: `postgres`.
 
 ### MongoDB
 
@@ -211,6 +241,20 @@ This file uses three main sections:
 
 - `MONGODB_SAMPLE_LIMIT`
   Default document count for `analyze`.
+
+### CouchDB
+
+- `COUCHDB_URI`
+  CouchDB server URL.
+
+- `COUCHDB_DB`
+  Source CouchDB database.
+
+- `COUCHDB_ENTITY`
+  Default source entity/database when `--entity` is not passed.
+
+- `COUCHDB_SAMPLE_LIMIT`
+  Default record count for `analyze`.
 
 ### PostgreSQL
 
@@ -291,6 +335,7 @@ Supports:
 
 - inherited `migrate.config.json`
 - `--config <path>` for a custom config file
+- `--source <adapter>` to override source adapter (`mongodb`, `mongo`, `couchdb`, `couch`)
 
 ### `migratoryai analyze`
 
@@ -331,6 +376,9 @@ Options:
 - `--config`
   Path to a migration config JSON file.
 
+- `--source`
+  Override source adapter from config/env. Supported values: `mongodb`, `mongo`, `couchdb`, `couch`.
+
 - `--entity`
   Source entity to migrate.
 
@@ -366,6 +414,7 @@ Supports:
 
 - inherited `migrate.config.json`
 - `--config <path>` for a custom config file
+- `--source <adapter>` to override source adapter (`mongodb`, `mongo`, `couchdb`, `couch`)
 
 ## Recommended Workflow
 
@@ -414,12 +463,13 @@ Current automated coverage includes:
 - idempotent rerun recovery
 - simulated partial data loss between runs
 - duplicate prevention through fingerprint-based upserts
+- CouchDB source adapter output shape and unified-model conversion
 
 ## Current Scope
 
 MigratoryAI currently focuses on:
 
-- nested MongoDB document analysis
+- nested MongoDB/CouchDB document analysis
 - parent-child relational mapping
 - batch migration into PostgreSQL
 - rerun-safe idempotent recovery
