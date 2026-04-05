@@ -6,11 +6,11 @@ It is designed for nested NoSQL documents, relational inference, rerun-safe migr
 
 ## Highlights
 
-- infer SQL tables from MongoDB documents
+- infer SQL tables from source NoSQL documents
 - extract nested arrays into child tables with foreign keys
 - generate suggested SQL and index recommendations
 - choose a source adapter with `--source` (`mongodb`, `mongo`, `couchdb`, `couch`)
-- migrate MongoDB data into PostgreSQL in batches
+- migrate supported NoSQL sources into PostgreSQL in batches
 - retry transient PostgreSQL failures
 - validate source-to-target row counts
 - rerun the same migration safely without duplicate rows
@@ -71,7 +71,7 @@ MigratoryAI is built to support reruns when a migration is interrupted or partia
 
 ### Validation
 
-- compares expected relational row counts derived from MongoDB
+- compares expected relational row counts derived from source records
 - compares actual PostgreSQL row counts
 - checks distinct fingerprint counts
 - detects duplicate rows
@@ -335,7 +335,6 @@ Supports:
 
 - inherited `migrate.config.json`
 - `--config <path>` for a custom config file
-- `--source <adapter>` to override source adapter (`mongodb`, `mongo`, `couchdb`, `couch`)
 
 ### `migratoryai analyze`
 
@@ -428,7 +427,7 @@ Because the migration is fingerprint-based and uses target-side upserts, rerunni
 
 ## Load Testing
 
-You can generate random MongoDB source data in a separate database for performance and migration testing.
+You can generate random MongoDB source data in a separate database for performance and migration testing. This helper is currently MongoDB-specific.
 
 ```bash
 npm run seed:loadtest -- --count 5000 --batch-size 1000 --reset
