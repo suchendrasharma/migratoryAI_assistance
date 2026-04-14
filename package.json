@@ -7,7 +7,7 @@
     ".": "./index.js"
   },
   "scripts": {
-    "test": "node test/idempotent-migration.test.js && node test/couch-source-adapter.test.js",
+    "test": "node test/idempotent-migration.test.js && node test/couch-source-adapter.test.js && node test/log-ingestor.test.js && node test/log-parser-llm.test.js",
     "seed:loadtest": "node scripts/generateLoadTestData.js"
   },
   "repository": {

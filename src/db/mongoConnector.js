@@ -58,6 +58,29 @@ async function fetchDocuments(config, options = {}) {
   };
 }
 
+async function saveDocuments(config, documents, options = {}) {
+  const { db } = await connectMongo(config);
+  const collectionName = options.collectionName || config.collectionName;
+
+  if (!collectionName) {
+    throw new Error('Missing MongoDB collection name for saving documents.');
+  }
+
+  if (!documents || documents.length === 0) {
+    return {
+      collectionName,
+      insertedCount: 0,
+    };
+  }
+
+  const result = await db.collection(collectionName).insertMany(documents);
+
+  return {
+    collectionName,
+    insertedCount: result.insertedCount,
+  };
+}
+
 async function closeMongoConnection() {
   if (client) {
     await client.close();
@@ -67,6 +90,7 @@ async function closeMongoConnection() {
 
 module.exports = {
   connectMongo,
+  saveDocuments,
   fetchDocuments,
   fetchSampleDocuments,
   closeMongoConnection,

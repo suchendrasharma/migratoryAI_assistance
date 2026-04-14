@@ -1,8 +1,11 @@
 const { Command } = require('commander');
+const fs = require('fs');
+const path = require('path');
 const chalk = require('chalk');
 const ora = require('ora').default;
 
 const {
+  getMongoConfig,
   getPostgresConfig,
   getSourceAdapterType,
   getSourceConfig,
@@ -16,7 +19,9 @@ const {
 } = require('../config/fileConfig');
 const { explainMigrationAnalysis } = require('../ai/migrationExplainer');
 const { analyzeDocuments } = require('../core/analyzer');
+const { ingestLogFile } = require('../core/logIngestor');
 const { buildRowsFromDocuments, migrateDocuments } = require('../core/migrator');
+const { saveDocuments, closeMongoConnection } = require('../db/mongoConnector');
 const { validateMigration } = require('../core/validator');
 const {
   getSourceAdapter,
@@ -563,6 +568,147 @@ async function runValidateCommand(options) {
   }
 }
 
+function resolveOutputFilePath(outputValue) {
+  if (!outputValue) {
+    return null;
+  }
+
+  const hasExtension = path.extname(outputValue) !== '';
+  const normalizedOutput = hasExtension ? outputValue : `${outputValue}.json`;
+
+  return path.resolve(process.cwd(), normalizedOutput);
+}
+
+function resolveIngestOutput({ output, outputFile, inputFile }) {
+  const allowedTargets = new Set(['json', 'postgres', 'mongo']);
+  const requestedOutput = output || 'json';
+
+  if (!allowedTargets.has(requestedOutput)) {
+    return {
+      target: 'json',
+      filePath: resolveOutputFilePath(requestedOutput),
+    };
+  }
+
+  if (requestedOutput === 'json') {
+    const fallbackFileName = `${path.basename(inputFile, path.extname(inputFile))}-parsed.json`;
+
+    return {
+      target: 'json',
+      filePath: resolveOutputFilePath(outputFile || fallbackFileName),
+    };
+  }
+
+  return {
+    target: requestedOutput,
+    filePath: null,
+  };
+}
+
+function writeJsonOutputFile(filePath, payload) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function runIngestCommand(filePath, outputFile, options = {}) {
+  const spinner = ora(`Reading log file "${filePath}"...`).start();
+
+  try {
+    const result = await ingestLogFile(filePath, {
+      collection: options.collection,
+      onProgress: (progress) => {
+        if (progress.phase === 'parse-success') {
+          spinner.text = `AI-assisted ingest: recognized ${progress.parsedCount} structured log line(s)...`;
+          return;
+        }
+
+        if (progress.phase === 'parse-failed') {
+          spinner.text = 'AI-assisted ingest: preserving an ambiguous line for review...';
+          return;
+        }
+
+        if (progress.phase === 'llm-retry') {
+          spinner.text = 'AI-assisted ingest: retrying an ambiguous line with the LLM parser...';
+        }
+      },
+    });
+
+    spinner.text = 'AI-assisted ingest: finalizing parsed output...';
+    await wait(1000);
+
+    const output = resolveIngestOutput({
+      output: options.output,
+      outputFile,
+      inputFile: filePath,
+    });
+
+    if (output.target === 'json') {
+      writeJsonOutputFile(output.filePath, result);
+    }
+
+    if (output.target === 'postgres') {
+      spinner.text = 'Migrating parsed log documents into PostgreSQL...';
+      const targetAdapter = getTargetAdapter('postgres');
+      const postgresConfig = getPostgresConfig();
+      try {
+        await migrateDocuments({
+          documents: result.documents,
+          collectionName: result.collection,
+          sourceAdapterType: 'logfile',
+          targetAdapterType: 'postgres',
+          queryExecutor: (callback) => targetAdapter.runInTransaction(postgresConfig, callback, {
+            isolationLevel: 'SERIALIZABLE',
+          }),
+        });
+      } finally {
+        await targetAdapter.close();
+      }
+    }
+
+    if (output.target === 'mongo') {
+      spinner.text = 'Saving parsed log documents into MongoDB...';
+      const mongoConfig = getMongoConfig();
+      try {
+        await saveDocuments(mongoConfig, result.documents, {
+          collectionName: result.collection,
+        });
+      } finally {
+        await closeMongoConnection();
+      }
+    }
+
+    spinner.succeed(
+      `Parsed ${result.documents.length} log line(s), ${result.unparsed.length} unparsed, coverage ${result.coverage}%.`
+    );
+    console.log(chalk.cyan('AI-assisted ingest summary:'));
+    console.log('- Regex parser extracted structured log records first.');
+    console.log('- Ambiguous lines were preserved for review instead of being dropped.');
+    console.log('- LLM parser support is available internally for future retry flows.');
+
+    if (output.target === 'json') {
+      console.log(chalk.cyan(`Output saved to ${output.filePath}`));
+    }
+
+    if (output.target === 'postgres') {
+      console.log(chalk.cyan(`Parsed log documents migrated to PostgreSQL collection/table "${result.collection}".`));
+    }
+
+    if (output.target === 'mongo') {
+      console.log(chalk.cyan(`Parsed log documents saved to MongoDB collection "${result.collection}".`));
+    }
+  } catch (error) {
+    spinner.fail('Unable to ingest log file.');
+    console.error(chalk.red(error.message));
+    process.exitCode = 1;
+  }
+}
+
 function createProgram() {
   const program = new Command();
 
@@ -577,6 +723,15 @@ function createProgram() {
     .action(() => {
       console.log(chalk.green('MigratoryAI initialized!'));
     });
+
+  program
+    .command('ingest')
+    .description('Ingest a local log file and parse it into JSON documents')
+    .argument('<file>', 'Path to logs.txt file')
+    .argument('[outputFile]', 'JSON output file path when --output=json')
+    .option('--collection <name>', 'Output collection name', 'logs')
+    .option('-o, --output <target>', 'Output target: json, postgres, mongo, or a JSON file path', 'json')
+    .action(runIngestCommand);
 
   program
     .command('analyze')
@@ -635,6 +790,7 @@ module.exports = {
   runAnalyzeCommand,
   runPostgresCheckCommand,
   runMigrateCommand,
+  runIngestCommand,
   runValidateCommand,
 };
 
