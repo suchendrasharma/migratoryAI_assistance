@@ -33,7 +33,8 @@
       <h1>Everything you need to run MigratoryAI with npm or npx.</h1>
       <p class="hero-text">
         MigratoryAI is a CLI package for analyzing NoSQL data, inferring SQL-ready structure,
-        previewing migration output, migrating in batches, and validating results.
+        previewing migration output, migrating in batches, validating results, and parsing log files
+        into structured documents.
       </p>
 
       <div class="hero-actions">
@@ -48,6 +49,7 @@
         <a href="#install">Install</a>
         <a href="#quickstart">Quick start</a>
         <a href="#commands">Commands</a>
+        <a href="#ingest">Log ingestion</a>
         <a href="#config">Configuration</a>
         <a href="#safety">Safety</a>
       </aside>
@@ -109,6 +111,80 @@ migratoryai migrate --entity users --limit 500 --batch-size 100 --validate
             <article>
               <h3>`migratoryai target-check`</h3>
               <p>Verify target database connectivity before running migrations. `pg-check` remains as an alias.</p>
+            </article>
+            <article>
+              <h3>`migratoryai ingest`</h3>
+              <p>Parse a log file into structured documents and route output to JSON, PostgreSQL, or MongoDB. Use --llm-fallback for AI-powered parsing of ambiguous lines.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="docs-card" id="ingest">
+          <span class="docs-ingest-badge">New in v1.3.0</span>
+          <p class="eyebrow">Log ingestion</p>
+          <h2>Parse log files into structured documents.</h2>
+
+          <div class="docs-command-grid">
+            <article class="docs-command-card">
+              <h3>Basic usage</h3>
+              <pre><code>migratoryai ingest logs.txt</code></pre>
+              <p>Parses the log file and writes structured JSON to a file named logs-parsed.json in the current directory.</p>
+            </article>
+
+            <article class="docs-command-card">
+              <h3>With AI fallback</h3>
+              <pre><code>migratoryai ingest logs.txt --llm-fallback</code></pre>
+              <p>Retries unparsed lines with AI Haiku. Requires ANTHROPIC_API_KEY to be set.</p>
+            </article>
+          </div>
+
+          <pre><code>migratoryai ingest logs.txt --output postgres
+migratoryai ingest logs.txt --output mongo --collection app_logs
+migratoryai ingest logs.txt --output ./out/parsed.json</code></pre>
+
+          <div class="docs-command-list">
+            <article>
+              <h3>--output &lt;target&gt;</h3>
+              <p>Where to send parsed documents. Accepts json (default), postgres, mongo, or a direct file path. When json is used without a path, output defaults to &lt;input-name&gt;-parsed.json.</p>
+            </article>
+            <article>
+              <h3>--collection &lt;name&gt;</h3>
+              <p>Collection or table name for the parsed output. Defaults to logs.</p>
+            </article>
+            <article>
+              <h3>--llm-fallback</h3>
+              <p>Retry lines the regex parser cannot handle using AI Haiku. Requires ANTHROPIC_API_KEY. Lines that still cannot be parsed are preserved in the unparsed list.</p>
+            </article>
+          </div>
+
+          <h3 style="margin: 22px 0 12px; font-family: 'Space Grotesk', sans-serif; font-size: 1.2rem;">Output shape</h3>
+          <pre><code>{
+  "level": "ERROR",
+  "event": "payment_failed",
+  "user_id": "123",
+  "timestamp": "2026-05-13T10:34:22.000Z",
+  "raw_message": "[ERROR] event=payment_failed user_id=123"
+}</code></pre>
+
+          <h3 style="margin: 22px 0 12px; font-family: 'Space Grotesk', sans-serif; font-size: 1.2rem;">Supported log formats</h3>
+          <ul class="docs-points">
+            <li>Bracket and prose: [INFO] Payment failed for user 999 at 14:02</li>
+            <li>Key-value pairs: [ERROR] event=payment_failed user_id=123 timestamp=10:32</li>
+            <li>ISO timestamp with key-value: [2026-05-13T10:34:22Z] [ERROR] event=payment_failed user_id=456</li>
+            <li>Logfmt: time=2026-05-13T10:34:22Z level=error event=payment_failed user_id=789</li>
+            <li>JSON log lines (Winston, Docker, plain JSON): {"level":"error","message":"Payment failed","userId":"123"}</li>
+            <li>Python standard logging, Spring Boot, Rails logger, and syslog-style</li>
+          </ul>
+
+          <h3 style="margin: 22px 0 12px; font-family: 'Space Grotesk', sans-serif; font-size: 1.2rem;">Environment variables</h3>
+          <div class="docs-command-list">
+            <article>
+              <h3>ANTHROPIC_API_KEY</h3>
+              <p>Required when using --llm-fallback. AI Haiku is used to parse log lines the regex engine cannot structure.</p>
+            </article>
+            <article>
+              <h3>CLAUDE_LOG_PARSER_MODEL</h3>
+              <p>Optional model override for the AI fallback parser. Defaults to claude-haiku-4-5-20251001.</p>
             </article>
           </div>
         </section>

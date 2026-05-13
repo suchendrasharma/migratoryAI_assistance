@@ -219,8 +219,8 @@ async function ingestLogFile(filePath, options = {}) {
 
       try {
         parsedDocument = await parseWithLLM(trimmedLine, {
-          apiKey: options.claudeApiKey,
-          model: options.claudeModel,
+          apiKey: options.llmApiKey,
+          model: options.llmModel,
         });
       } catch (error) {
         if (options.throwOnLlmError) {

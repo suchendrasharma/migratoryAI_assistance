@@ -636,7 +636,7 @@ async function runIngestCommand(filePath, outputFile, options = {}) {
         }
 
         if (progress.phase === 'llm-retry') {
-          spinner.text = 'Ingest: retrying an ambiguous line with Claude...';
+          spinner.text = 'Ingest: retrying an ambiguous line with AI...';
         }
       },
     });
@@ -691,9 +691,9 @@ async function runIngestCommand(filePath, outputFile, options = {}) {
     console.log(chalk.cyan('Ingest summary:'));
     console.log('- Regex parser extracted structured log records first.');
     if (usingLlm) {
-      console.log('- Claude was used as fallback for ambiguous lines.');
+      console.log('- AI was used as fallback for ambiguous lines.');
     } else if (result.unparsed.length > 0) {
-      console.log(`- ${result.unparsed.length} ambiguous line(s) skipped. Re-run with --llm-fallback to parse them with Claude.`);
+      console.log(`- ${result.unparsed.length} ambiguous line(s) skipped. Re-run with --llm-fallback to parse them with AI.`);
     }
 
     if (output.target === 'json') {
@@ -736,7 +736,7 @@ function createProgram() {
     .argument('[outputFile]', 'JSON output file path when --output=json')
     .option('--collection <name>', 'Output collection name', 'logs')
     .option('-o, --output <target>', 'Output target: json, postgres, mongo, or a JSON file path', 'json')
-    .option('--llm-fallback', 'Use Claude as fallback parser for lines the regex cannot parse')
+    .option('--llm-fallback', 'Use an AI model as fallback parser for lines the regex cannot parse')
     .action(runIngestCommand);
 
   program

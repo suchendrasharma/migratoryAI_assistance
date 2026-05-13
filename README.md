@@ -285,13 +285,13 @@ Optional alternatives:
 
 If `POSTGRES_URL` or `DATABASE_URL` is set, it can be used instead of separate `PG*` values.
 
-### Claude (log ingestion LLM fallback)
+### AI model (log ingestion LLM fallback)
 
 - `ANTHROPIC_API_KEY`
-  Required when using `--llm-fallback` with the `ingest` command. Claude Haiku is used to parse log lines that the regex parser cannot handle.
+  Required when using `--llm-fallback` with the `ingest` command. an AI model is used to parse log lines that the regex parser cannot handle.
 
 - `CLAUDE_LOG_PARSER_MODEL`
-  Optional. Override the Claude model used for log parsing. Defaults to `claude-haiku-4-5-20251001`.
+  Optional. Override the AI model used for log parsing. Defaults to `claude-haiku-4-5-20251001`.
 
 ## Config File Option
 
@@ -421,7 +421,7 @@ What it does:
 - parses each line into structured fields: `level`, `event`, `user_id`, `timestamp`, `raw_message`
 - routes parsed documents to JSON, PostgreSQL, or MongoDB
 - reports parse coverage (parsed vs. unparsed line count)
-- optionally retries unparsed lines using Claude (`--llm-fallback`)
+- optionally retries unparsed lines using an AI model (`--llm-fallback`)
 
 Supported log formats out of the box:
 
@@ -441,7 +441,7 @@ Options:
   Collection or table name for the parsed output. Defaults to `logs`.
 
 - `--llm-fallback`
-  Use Claude as a fallback parser for lines the regex cannot parse. Requires `ANTHROPIC_API_KEY`.
+  Use an AI model as a fallback parser for lines the regex cannot parse. Requires `ANTHROPIC_API_KEY`.
 
 ### `migratoryai validate`
 
@@ -511,7 +511,7 @@ Current automated coverage includes:
 - duplicate prevention through fingerprint-based upserts
 - CouchDB source adapter output shape and unified-model conversion
 - log line regex parsing across key=value, prose, and ISO timestamp formats
-- Claude LLM fallback parser request shape and response normalization
+- AI LLM fallback parser request shape and response normalization
 
 ## Current Scope
 
@@ -522,7 +522,7 @@ MigratoryAI currently focuses on:
 - batch migration into PostgreSQL
 - rerun-safe idempotent recovery
 - row-count and fingerprint-level validation
-- log file ingestion into JSON, PostgreSQL, or MongoDB with optional Claude-powered fallback parsing
+- log file ingestion into JSON, PostgreSQL, or MongoDB with optional AI-powered fallback parsing
 
 Possible future improvements:
 

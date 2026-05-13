@@ -32,6 +32,11 @@
 
     <main class="hero-grid">
       <section class="hero-copy">
+        <div class="release-pill reveal rise-1">
+          <span class="release-pill-dot"></span>
+          v1.3.0 — Log ingestion + AI fallback shipped
+          <span class="release-pill-arrow">→</span>
+        </div>
         <p class="eyebrow reveal rise-1">AI-Powered Database Migration</p>
         <h1>
           Build your
@@ -53,6 +58,7 @@
         <div class="hero-badges reveal rise-5">
           <span>npm install -g migratoryai</span>
           <span>npx migratoryai</span>
+          <span>Log ingestion</span>
           <span>Explain mode</span>
           <span>Safe reruns</span>
         </div>
@@ -126,11 +132,11 @@
         </div>
 
         <div class="proof-card reveal rise-4">
-          <p class="proof-kicker">Now live on npm</p>
-          <h3>Install it fast. Understand every step.</h3>
+          <p class="proof-kicker">v1.3.0 released</p>
+          <h3>Log ingestion. AI-powered. Live on npm.</h3>
           <p>
-            Run MigratoryAI with `npx migratoryai` for zero-install trials or install it globally
-            for repeatable migration workflows across your team.
+            Parse log files into structured documents and route them to JSON, PostgreSQL, or MongoDB.
+            AI handles the lines that regex cannot.
           </p>
         </div>
       </aside>
@@ -166,6 +172,33 @@
       </div>
     </section>
 
+    <section class="release-section" id="release">
+      <div class="section-heading">
+        <p class="eyebrow">v1.3.0</p>
+        <h2>Log ingestion, AI fallback, and multi-format parsing.</h2>
+      </div>
+
+      <div class="release-grid">
+        <article class="release-card">
+          <span class="release-tag">New command</span>
+          <h3>migratoryai ingest</h3>
+          <p>Parse log files into structured documents with level, event, user ID, and timestamp fields extracted. Route output to JSON, PostgreSQL, or MongoDB in a single command.</p>
+        </article>
+
+        <article class="release-card">
+          <span class="release-tag">AI-powered</span>
+          <h3>LLM fallback with --llm-fallback</h3>
+          <p>Lines the regex parser cannot structure are retried with AI Haiku. Set ANTHROPIC_API_KEY and add --llm-fallback to close the gap on ambiguous or unusual log formats.</p>
+        </article>
+
+        <article class="release-card">
+          <span class="release-tag">15 formats</span>
+          <h3>JSON, logfmt, syslog, and more</h3>
+          <p>Native support for Winston, Docker, logfmt, bracket-and-prose, ISO timestamps, and key-value formats. 93% regex coverage across real-world log structures out of the box.</p>
+        </article>
+      </div>
+    </section>
+
     <section class="feature-section" id="features">
       <div class="section-heading">
         <p class="eyebrow">Product snapshot</p>
@@ -191,6 +224,17 @@
         <article class="feature-card">
           <h3>AI assistant layer</h3>
           <p>Explain mode helps engineers understand why certain tables, foreign keys, and indexes are created from NoSQL data.</p>
+        </article>
+
+        <article class="feature-card">
+          <span class="new-tag">New</span>
+          <h3>Log ingestion</h3>
+          <p>Parse log files into structured documents and migrate them to PostgreSQL, MongoDB, or JSON. AI handles the lines regex cannot parse.</p>
+        </article>
+
+        <article class="feature-card">
+          <h3>Multi-source adapters</h3>
+          <p>Choose your source with --source. MongoDB and CouchDB are supported today with a plugin architecture ready for new adapters.</p>
         </article>
       </div>
     </section>

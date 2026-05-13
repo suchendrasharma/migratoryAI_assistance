@@ -109,7 +109,7 @@ async function parseWithLLM(rawLine, options = {}) {
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`Claude log parsing failed. HTTP ${response.status}: ${details}`);
+    throw new Error(`LLM log parsing failed. HTTP ${response.status}: ${details}`);
   }
 
   const responsePayload = await response.json();

@@ -14,7 +14,7 @@ async function runScenario() {
 
     const body = JSON.parse(request.body);
 
-    assert.equal(body.model, 'claude-test');
+    assert.equal(body.model, 'test-model');
     assert.equal(body.tool_choice.type, 'tool');
     assert.equal(body.tool_choice.name, 'parse_log_line');
     assert.ok(Array.isArray(body.tools));
@@ -47,7 +47,7 @@ async function runScenario() {
   try {
     const parsed = await parseWithLLM(rawLine, {
       apiKey: 'test-api-key',
-      model: 'claude-test',
+      model: 'test-model',
     });
 
     assert.deepEqual(parsed, {
