@@ -14,6 +14,8 @@ It is designed for nested NoSQL documents, relational inference, rerun-safe migr
 - retry transient PostgreSQL failures
 - validate source-to-target row counts
 - rerun the same migration safely without duplicate rows
+- parse log files into structured documents and route to JSON, PostgreSQL, or MongoDB
+- use Claude as an optional LLM fallback for ambiguous log lines (`--llm-fallback`)
 - generate randomized MongoDB load-test data
 
 ## Example
@@ -283,6 +285,14 @@ Optional alternatives:
 
 If `POSTGRES_URL` or `DATABASE_URL` is set, it can be used instead of separate `PG*` values.
 
+### Claude (log ingestion LLM fallback)
+
+- `ANTHROPIC_API_KEY`
+  Required when using `--llm-fallback` with the `ingest` command. Claude Haiku is used to parse log lines that the regex parser cannot handle.
+
+- `CLAUDE_LOG_PARSER_MODEL`
+  Optional. Override the Claude model used for log parsing. Defaults to `claude-haiku-4-5-20251001`.
+
 ## Config File Option
 
 MigratoryAI supports both:
@@ -396,6 +406,43 @@ Options:
 - `--validate`
   Runs validation after migration.
 
+### `migratoryai ingest`
+
+```bash
+migratoryai ingest logs.txt
+migratoryai ingest logs.txt --output postgres
+migratoryai ingest logs.txt --output mongo
+migratoryai ingest logs.txt --llm-fallback
+```
+
+What it does:
+
+- reads a local log file line by line
+- parses each line into structured fields: `level`, `event`, `user_id`, `timestamp`, `raw_message`
+- routes parsed documents to JSON, PostgreSQL, or MongoDB
+- reports parse coverage (parsed vs. unparsed line count)
+- optionally retries unparsed lines using Claude (`--llm-fallback`)
+
+Supported log formats out of the box:
+
+- bracket + prose: `[INFO] Payment failed for user 999 at 14:02`
+- key=value pairs: `[ERROR] event=payment_failed user_id=123`
+- ISO timestamp + key=value: `[2026-05-13T10:34:22Z] [ERROR] event=payment_failed user_id=456`
+- logfmt: `time=2026-05-13T10:34:22Z level=error event=payment_failed user_id=789`
+- JSON log lines (Winston, Docker, plain JSON): `{"level":"error","message":"Payment failed","userId":"123"}`
+- Python/standard logging, Spring Boot, Rails logger, syslog-style
+
+Options:
+
+- `--output <target>`
+  Where to send parsed documents. Accepted values: `json` (default), `postgres`, `mongo`. You can also pass a file path directly (e.g. `--output ./out/parsed.json`).
+
+- `--collection <name>`
+  Collection or table name for the parsed output. Defaults to `logs`.
+
+- `--llm-fallback`
+  Use Claude as a fallback parser for lines the regex cannot parse. Requires `ANTHROPIC_API_KEY`.
+
 ### `migratoryai validate`
 
 ```bash
@@ -463,6 +510,8 @@ Current automated coverage includes:
 - simulated partial data loss between runs
 - duplicate prevention through fingerprint-based upserts
 - CouchDB source adapter output shape and unified-model conversion
+- log line regex parsing across key=value, prose, and ISO timestamp formats
+- Claude LLM fallback parser request shape and response normalization
 
 ## Current Scope
 
@@ -473,6 +522,7 @@ MigratoryAI currently focuses on:
 - batch migration into PostgreSQL
 - rerun-safe idempotent recovery
 - row-count and fingerprint-level validation
+- log file ingestion into JSON, PostgreSQL, or MongoDB with optional Claude-powered fallback parsing
 
 Possible future improvements:
 
