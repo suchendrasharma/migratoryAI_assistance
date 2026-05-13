@@ -32,10 +32,15 @@ function normalizeEvent(value) {
 function compactMessage(value) {
   return String(value || '')
     .replace(/\[[^\]]+\]/g, ' ')
-    .replace(/\b(?:event|event_name|action|type)=\S+/gi, ' ')
-    .replace(/\b(?:user|user_id|uid|customer_id)=\S+/gi, ' ')
-    .replace(/\b(?:timestamp|time|ts)=\S+/gi, ' ')
+    .replace(/\b\w+=\S+/gi, ' ')
+    .replace(/\b(?:for\s+)?(?:user|customer|uid)\s+[a-zA-Z0-9_.:-]+/gi, ' ')
+    .replace(/\bat\s+\d{1,2}:\d{2}(?::\d{2})?/gi, ' ')
+    .replace(/\d{4}-\d{2}-\d{2}T[\d:.Z]+/g, ' ')
+    .replace(/\b[a-f0-9]{24,}\b/gi, ' ')
+    .replace(/\b\d+\b/g, ' ')
     .replace(new RegExp(`\\b${LEVEL_PATTERN}\\b`, 'gi'), ' ')
+    .replace(/\b(?:the|a|an|for|to|from|due|with|into|out|of|in|on|by|is|was|has|have|been|be|are)\b/gi, ' ')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -46,6 +51,12 @@ function inferEventFromMessage(line) {
 
   return event || null;
 }
+
+const JSON_LEVEL_FIELDS = ['level', 'severity', 'lvl', 'loglevel'];
+const JSON_MESSAGE_FIELDS = ['message', 'msg', 'log'];
+const JSON_TIMESTAMP_FIELDS = ['timestamp', 'time', 'ts', '@timestamp'];
+const JSON_USERID_FIELDS = ['user_id', 'userId', 'uid', 'customer_id', 'customerId'];
+const JSON_EVENT_FIELDS = ['event', 'event_name', 'action'];
 
 function extractFirstMatch(line, patterns) {
   for (const pattern of patterns) {
@@ -59,11 +70,75 @@ function extractFirstMatch(line, patterns) {
   return null;
 }
 
+function parseJsonLogLine(rawLine) {
+  let obj;
+  try {
+    obj = JSON.parse(rawLine);
+  } catch {
+    return null;
+  }
+
+  if (typeof obj !== 'object' || obj === null) {
+    return null;
+  }
+
+  let rawLevel = null;
+  for (const field of JSON_LEVEL_FIELDS) {
+    if (typeof obj[field] === 'string') { rawLevel = obj[field]; break; }
+  }
+
+  let message = null;
+  for (const field of JSON_MESSAGE_FIELDS) {
+    if (typeof obj[field] === 'string') {
+      message = obj[field].replace(/\\n$/, '').trim();
+      break;
+    }
+  }
+
+  if (!rawLevel && message) {
+    rawLevel = extractFirstMatch(message, [
+      new RegExp(`\\[${LEVEL_PATTERN}\\]`, 'i'),
+      new RegExp(`\\b${LEVEL_PATTERN}\\b`, 'i'),
+    ]);
+  }
+
+  const level = normalizeLevel(rawLevel);
+
+  let event = null;
+  for (const field of JSON_EVENT_FIELDS) {
+    if (typeof obj[field] === 'string') { event = normalizeEvent(obj[field]); break; }
+  }
+  if (!event && message) {
+    event = inferEventFromMessage(message);
+  }
+
+  if (!level || !event) {
+    return null;
+  }
+
+  let userId = null;
+  for (const field of JSON_USERID_FIELDS) {
+    if (obj[field] != null) { userId = String(obj[field]); break; }
+  }
+
+  let timestamp = null;
+  for (const field of JSON_TIMESTAMP_FIELDS) {
+    if (typeof obj[field] === 'string') { timestamp = obj[field]; break; }
+  }
+
+  return { level, event, user_id: userId, timestamp, raw_message: rawLine };
+}
+
 function parseLogLine(line) {
   const rawLine = String(line || '').trim();
 
   if (!rawLine) {
     return null;
+  }
+
+  if (rawLine.startsWith('{')) {
+    const jsonResult = parseJsonLogLine(rawLine);
+    if (jsonResult) return jsonResult;
   }
 
   const level = normalizeLevel(
@@ -78,12 +153,17 @@ function parseLogLine(line) {
     ])
   ) || inferEventFromMessage(rawLine);
   const userId = extractFirstMatch(rawLine, [
-    /\b(?:user_id|user|uid|customer_id)=["']?([a-zA-Z0-9_.:-]+)["']?/i,
+    /\b(?:user_id|uid|customer_id)=["']?([a-zA-Z0-9_.:-]+)["']?/i,
+    /\b(?:user_id|uid|customer_id):\s*["']?([a-zA-Z0-9_.:-]+)["']?/i,
+    /\bfor\s+(?:user|customer)\s+([a-zA-Z0-9_.:-]+)/i,
+    /\buser\s+(\d+)\b/i,
   ]);
   const timestamp = extractFirstMatch(rawLine, [
+    /\[(\d{4}-\d{2}-\d{2}T[\d:.Z]+)\]/,
+    /\b(\d{4}-\d{2}-\d{2}T[\d:.Z]+)\b/,
     /\b(?:timestamp|time|ts)=["']?(\d{1,2}:\d{2}(?::\d{2})?)["']?/i,
-    /\[(\d{1,2}:\d{2}(?::\d{2})?)\]/,
-    /\b(\d{1,2}:\d{2}(?::\d{2})?)\b/,
+    /\[(\d{2}:\d{2}(?::\d{2})?)\]/,
+    /\bat\s+(\d{2}:\d{2}(?::\d{2})?)\b/,
   ]);
 
   if (!level || !event) {
@@ -139,8 +219,8 @@ async function ingestLogFile(filePath, options = {}) {
 
       try {
         parsedDocument = await parseWithLLM(trimmedLine, {
-          apiKey: options.openAiApiKey,
-          model: options.openAiModel,
+          apiKey: options.claudeApiKey,
+          model: options.claudeModel,
         });
       } catch (error) {
         if (options.throwOnLlmError) {

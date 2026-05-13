@@ -1,37 +1,40 @@
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
-const DEFAULT_MODEL = 'gpt-4o-mini';
+const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_VERSION = '2023-06-01';
+const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 
-const LOG_PARSE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    parsed: {
-      type: 'boolean',
-      description: 'Whether the log line contains enough signal to parse into a structured log event.',
+const LOG_PARSE_TOOL = {
+  name: 'parse_log_line',
+  description: 'Parse a log line into structured log event fields.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      parsed: {
+        type: 'boolean',
+        description: 'true if the line contains a recognizable log event, false if it is random noise.',
+      },
+      level: {
+        type: ['string', 'null'],
+        enum: ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL', null],
+      },
+      event: {
+        type: ['string', 'null'],
+        description: 'Snake_case event name inferred from the log message. Do not include user IDs, timestamps, or numeric IDs.',
+      },
+      user_id: {
+        type: ['string', 'null'],
+        description: 'User or customer identifier found in the log line, or null.',
+      },
+      timestamp: {
+        type: ['string', 'null'],
+        description: 'Timestamp string found in the log line (ISO 8601 preferred), or null.',
+      },
     },
-    level: {
-      type: ['string', 'null'],
-      enum: ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL', null],
-    },
-    event: {
-      type: ['string', 'null'],
-      description: 'Snake_case event name inferred from the log line.',
-    },
-    user_id: {
-      type: ['string', 'null'],
-    },
-    timestamp: {
-      type: ['string', 'null'],
-    },
-    raw_message: {
-      type: 'string',
-    },
+    required: ['parsed', 'level', 'event', 'user_id', 'timestamp'],
   },
-  required: ['parsed', 'level', 'event', 'user_id', 'timestamp', 'raw_message'],
 };
 
-function getOpenAiApiKey(options = {}) {
-  return options.apiKey || process.env.OPENAI_API_KEY;
+function getApiKey(options = {}) {
+  return options.apiKey || process.env.ANTHROPIC_API_KEY;
 }
 
 function normalizeEvent(value) {
@@ -48,100 +51,71 @@ function normalizeEvent(value) {
     .toLowerCase();
 }
 
-function extractResponseText(responsePayload) {
-  if (typeof responsePayload.output_text === 'string') {
-    return responsePayload.output_text;
-  }
-
-  if (!Array.isArray(responsePayload.output)) {
-    return '';
-  }
-
-  for (const item of responsePayload.output) {
-    if (!Array.isArray(item.content)) {
-      continue;
-    }
-
-    const textContent = item.content.find((content) => {
-      return content && (content.type === 'output_text' || content.type === 'text');
-    });
-
-    if (textContent && typeof textContent.text === 'string') {
-      return textContent.text;
-    }
-  }
-
-  return '';
-}
-
-function normalizeLlmParseResult(rawLine, parsedPayload) {
-  if (!parsedPayload || parsedPayload.parsed !== true) {
+function extractToolInput(responsePayload) {
+  if (!Array.isArray(responsePayload.content)) {
     return null;
   }
 
-  if (!parsedPayload.level || !parsedPayload.event) {
+  const toolUse = responsePayload.content.find((block) => block.type === 'tool_use');
+  return toolUse ? toolUse.input : null;
+}
+
+function normalizeLlmParseResult(rawLine, input) {
+  if (!input || input.parsed !== true) {
+    return null;
+  }
+
+  if (!input.level || !input.event) {
     return null;
   }
 
   return {
-    level: String(parsedPayload.level).toUpperCase(),
-    event: normalizeEvent(parsedPayload.event),
-    user_id: parsedPayload.user_id === undefined ? null : parsedPayload.user_id,
-    timestamp: parsedPayload.timestamp === undefined ? null : parsedPayload.timestamp,
+    level: String(input.level).toUpperCase(),
+    event: normalizeEvent(input.event),
+    user_id: input.user_id ?? null,
+    timestamp: input.timestamp ?? null,
     raw_message: rawLine,
   };
 }
 
 async function parseWithLLM(rawLine, options = {}) {
-  const apiKey = getOpenAiApiKey(options);
+  const apiKey = getApiKey(options);
 
   if (!apiKey) {
-    throw new Error('Missing OpenAI API key. Set OPENAI_API_KEY or pass apiKey.');
+    throw new Error('Missing Anthropic API key. Set ANTHROPIC_API_KEY or pass apiKey.');
   }
 
-  const response = await fetch(OPENAI_RESPONSES_URL, {
+  const response = await fetch(ANTHROPIC_MESSAGES_URL, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': ANTHROPIC_VERSION,
+      'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: options.model || process.env.OPENAI_LOG_PARSER_MODEL || DEFAULT_MODEL,
-      input: [
-        {
-          role: 'system',
-          content: [
-            'You parse application log lines into JSON.',
-            'Return parsed=false when the line is random text or does not contain a log event.',
-            'Use uppercase levels and snake_case event names.',
-          ].join(' '),
-        },
+      model: options.model || process.env.CLAUDE_LOG_PARSER_MODEL || DEFAULT_MODEL,
+      max_tokens: 256,
+      system: 'You parse application log lines into structured fields. Use uppercase levels and snake_case event names. Event names must not include user IDs, timestamps, or numeric identifiers.',
+      tools: [LOG_PARSE_TOOL],
+      tool_choice: { type: 'tool', name: 'parse_log_line' },
+      messages: [
         {
           role: 'user',
-          content: `Parse this log line as JSON:\n${rawLine}`,
+          content: `Parse this log line:\n${rawLine}`,
         },
       ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'log_parse_result',
-          strict: true,
-          schema: LOG_PARSE_SCHEMA,
-        },
-      },
     }),
   });
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`OpenAI log parsing failed. HTTP ${response.status}: ${details}`);
+    throw new Error(`Claude log parsing failed. HTTP ${response.status}: ${details}`);
   }
 
   const responsePayload = await response.json();
-  const outputText = extractResponseText(responsePayload);
-  const parsedPayload = JSON.parse(outputText);
+  const toolInput = extractToolInput(responsePayload);
 
-  return normalizeLlmParseResult(rawLine, parsedPayload);
+  return normalizeLlmParseResult(rawLine, toolInput);
 }
 
 module.exports = {

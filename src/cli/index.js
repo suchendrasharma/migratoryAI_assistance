@@ -618,28 +618,30 @@ function wait(ms) {
 
 async function runIngestCommand(filePath, outputFile, options = {}) {
   const spinner = ora(`Reading log file "${filePath}"...`).start();
+  const usingLlm = Boolean(options.llmFallback);
 
   try {
     const result = await ingestLogFile(filePath, {
       collection: options.collection,
+      llmFallback: usingLlm,
       onProgress: (progress) => {
         if (progress.phase === 'parse-success') {
-          spinner.text = `AI-assisted ingest: recognized ${progress.parsedCount} structured log line(s)...`;
+          spinner.text = `Ingest: recognized ${progress.parsedCount} structured log line(s)...`;
           return;
         }
 
         if (progress.phase === 'parse-failed') {
-          spinner.text = 'AI-assisted ingest: preserving an ambiguous line for review...';
+          spinner.text = 'Ingest: preserving an ambiguous line for review...';
           return;
         }
 
         if (progress.phase === 'llm-retry') {
-          spinner.text = 'AI-assisted ingest: retrying an ambiguous line with the LLM parser...';
+          spinner.text = 'Ingest: retrying an ambiguous line with Claude...';
         }
       },
     });
 
-    spinner.text = 'AI-assisted ingest: finalizing parsed output...';
+    spinner.text = 'Ingest: finalizing parsed output...';
     await wait(1000);
 
     const output = resolveIngestOutput({
@@ -686,10 +688,13 @@ async function runIngestCommand(filePath, outputFile, options = {}) {
     spinner.succeed(
       `Parsed ${result.documents.length} log line(s), ${result.unparsed.length} unparsed, coverage ${result.coverage}%.`
     );
-    console.log(chalk.cyan('AI-assisted ingest summary:'));
+    console.log(chalk.cyan('Ingest summary:'));
     console.log('- Regex parser extracted structured log records first.');
-    console.log('- Ambiguous lines were preserved for review instead of being dropped.');
-    console.log('- LLM parser support is available internally for future retry flows.');
+    if (usingLlm) {
+      console.log('- Claude was used as fallback for ambiguous lines.');
+    } else if (result.unparsed.length > 0) {
+      console.log(`- ${result.unparsed.length} ambiguous line(s) skipped. Re-run with --llm-fallback to parse them with Claude.`);
+    }
 
     if (output.target === 'json') {
       console.log(chalk.cyan(`Output saved to ${output.filePath}`));
@@ -731,6 +736,7 @@ function createProgram() {
     .argument('[outputFile]', 'JSON output file path when --output=json')
     .option('--collection <name>', 'Output collection name', 'logs')
     .option('-o, --output <target>', 'Output target: json, postgres, mongo, or a JSON file path', 'json')
+    .option('--llm-fallback', 'Use Claude as fallback parser for lines the regex cannot parse')
     .action(runIngestCommand);
 
   program

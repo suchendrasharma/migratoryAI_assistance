@@ -7,30 +7,38 @@ async function runScenario() {
   const rawLine = 'Payment failed for customer 123 at 10:32 severity critical';
 
   global.fetch = async (url, request) => {
-    assert.equal(url, 'https://api.openai.com/v1/responses');
+    assert.equal(url, 'https://api.anthropic.com/v1/messages');
     assert.equal(request.method, 'POST');
-    assert.equal(request.headers.Authorization, 'Bearer test-api-key');
+    assert.equal(request.headers['x-api-key'], 'test-api-key');
+    assert.equal(request.headers['anthropic-version'], '2023-06-01');
 
     const body = JSON.parse(request.body);
 
-    assert.equal(body.model, 'gpt-test');
-    assert.equal(body.text.format.type, 'json_schema');
-    assert.equal(body.text.format.name, 'log_parse_result');
-    assert.equal(body.text.format.strict, true);
+    assert.equal(body.model, 'claude-test');
+    assert.equal(body.tool_choice.type, 'tool');
+    assert.equal(body.tool_choice.name, 'parse_log_line');
+    assert.ok(Array.isArray(body.tools));
+    assert.equal(body.tools[0].name, 'parse_log_line');
 
     return {
       ok: true,
       status: 200,
       async json() {
         return {
-          output_text: JSON.stringify({
-            parsed: true,
-            level: 'ERROR',
-            event: 'payment_failed',
-            user_id: '123',
-            timestamp: '10:32',
-            raw_message: rawLine,
-          }),
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_test123',
+              name: 'parse_log_line',
+              input: {
+                parsed: true,
+                level: 'ERROR',
+                event: 'payment_failed',
+                user_id: '123',
+                timestamp: '10:32',
+              },
+            },
+          ],
         };
       },
     };
@@ -39,7 +47,7 @@ async function runScenario() {
   try {
     const parsed = await parseWithLLM(rawLine, {
       apiKey: 'test-api-key',
-      model: 'gpt-test',
+      model: 'claude-test',
     });
 
     assert.deepEqual(parsed, {
