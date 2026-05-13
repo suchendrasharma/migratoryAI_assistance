@@ -1,6 +1,6 @@
 {
   "name": "migratoryai",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "AI-powered NoSQL to SQL migration CLI with analysis, dry-run previews, rerun-safe migration, and validation.",
   "main": "./index.js",
   "exports": {
